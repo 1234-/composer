@@ -33,6 +33,7 @@ class FilesystemRepository extends WritableArrayRepository
      */
     public function __construct(JsonFile $repositoryFile)
     {
+        parent::__construct();
         $this->file = $repositoryFile;
     }
 
@@ -81,6 +82,10 @@ class FilesystemRepository extends WritableArrayRepository
         foreach ($this->getCanonicalPackages() as $package) {
             $data[] = $dumper->dump($package);
         }
+
+        usort($data, function ($a, $b) {
+            return strcmp($a['name'], $b['name']);
+        });
 
         $this->file->write($data);
     }

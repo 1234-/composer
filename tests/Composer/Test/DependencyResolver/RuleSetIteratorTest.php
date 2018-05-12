@@ -12,14 +12,17 @@
 
 namespace Composer\Test\DependencyResolver;
 
+use Composer\DependencyResolver\GenericRule;
 use Composer\DependencyResolver\Rule;
 use Composer\DependencyResolver\RuleSet;
 use Composer\DependencyResolver\RuleSetIterator;
 use Composer\DependencyResolver\Pool;
+use PHPUnit\Framework\TestCase;
 
-class RuleSetIteratorTest extends \PHPUnit_Framework_TestCase
+class RuleSetIteratorTest extends TestCase
 {
     protected $rules;
+    protected $pool;
 
     protected function setUp()
     {
@@ -27,11 +30,11 @@ class RuleSetIteratorTest extends \PHPUnit_Framework_TestCase
 
         $this->rules = array(
             RuleSet::TYPE_JOB => array(
-                new Rule($this->pool, array(), 'job1', null),
-                new Rule($this->pool, array(), 'job2', null),
+                new GenericRule(array(), Rule::RULE_JOB_INSTALL, null),
+                new GenericRule(array(), Rule::RULE_JOB_INSTALL, null),
             ),
             RuleSet::TYPE_LEARNED => array(
-                new Rule($this->pool, array(), 'update1', null),
+                new GenericRule(array(), Rule::RULE_INTERNAL_ALLOW_UPDATE, null),
             ),
             RuleSet::TYPE_PACKAGE => array(),
         );

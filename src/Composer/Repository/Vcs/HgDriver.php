@@ -13,7 +13,6 @@
 namespace Composer\Repository\Vcs;
 
 use Composer\Config;
-use Composer\Json\JsonFile;
 use Composer\Util\ProcessExecutor;
 use Composer\Util\Filesystem;
 use Composer\IO\IOInterface;
@@ -47,10 +46,13 @@ class HgDriver extends VcsDriver
                 throw new \RuntimeException('Can not clone '.$this->url.' to access package information. The "'.$cacheDir.'" directory is not writable by the current user.');
             }
 
+            // Ensure we are allowed to use this URL by config
+            $this->config->prohibitUrlByConfig($this->url, $this->io);
+
             // update the repo if it is a valid hg repository
             if (is_dir($this->repoDir) && 0 === $this->process->execute('hg summary', $output, $this->repoDir)) {
                 if (0 !== $this->process->execute('hg pull', $output, $this->repoDir)) {
-                    $this->io->write('<error>Failed to update '.$this->url.', package information from this repository may be outdated ('.$this->process->getErrorOutput().')</error>');
+                    $this->io->writeError('<error>Failed to update '.$this->url.', package information from this repository may be outdated ('.$this->process->getErrorOutput().')</error>');
                 }
             } else {
                 // clean up directory and do a fresh clone into it
@@ -111,28 +113,35 @@ class HgDriver extends VcsDriver
     }
 
     /**
-     * {@inheritDoc}
+     * {@inheritdoc}
      */
-    public function getComposerInformation($identifier)
+    public function getFileContent($file, $identifier)
     {
-        if (!isset($this->infoCache[$identifier])) {
-            $this->process->execute(sprintf('hg cat -r %s composer.json', ProcessExecutor::escape($identifier)), $composer, $this->repoDir);
+        $resource = sprintf('hg cat -r %s %s', ProcessExecutor::escape($identifier), ProcessExecutor::escape($file));
+        $this->process->execute($resource, $content, $this->repoDir);
 
-            if (!trim($composer)) {
-                return;
-            }
-
-            $composer = JsonFile::parseJson($composer, $identifier);
-
-            if (!isset($composer['time'])) {
-                $this->process->execute(sprintf('hg log --template "{date|rfc3339date}" -r %s', ProcessExecutor::escape($identifier)), $output, $this->repoDir);
-                $date = new \DateTime(trim($output), new \DateTimeZone('UTC'));
-                $composer['time'] = $date->format('Y-m-d H:i:s');
-            }
-            $this->infoCache[$identifier] = $composer;
+        if (!trim($content)) {
+            return;
         }
 
-        return $this->infoCache[$identifier];
+        return $content;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function getChangeDate($identifier)
+    {
+        $this->process->execute(
+            sprintf(
+                'hg log --template "{date|rfc3339date}" -r %s',
+                ProcessExecutor::escape($identifier)
+            ),
+            $output,
+            $this->repoDir
+        );
+
+        return new \DateTime(trim($output), new \DateTimeZone('UTC'));
     }
 
     /**
@@ -192,7 +201,7 @@ class HgDriver extends VcsDriver
      */
     public static function supports(IOInterface $io, Config $config, $url, $deep = false)
     {
-        if (preg_match('#(^(?:https?|ssh)://(?:[^@]@)?bitbucket.org|https://(?:.*?)\.kilnhg.com)#i', $url)) {
+        if (preg_match('#(^(?:https?|ssh)://(?:[^@]+@)?bitbucket.org|https://(?:.*?)\.kilnhg.com)#i', $url)) {
             return true;
         }
 
@@ -200,7 +209,7 @@ class HgDriver extends VcsDriver
         if (Filesystem::isLocalPath($url)) {
             $url = Filesystem::getPlatformPath($url);
             if (!is_dir($url)) {
-                throw new \RuntimeException('Directory does not exist: '.$url);
+                return false;
             }
 
             $process = new ProcessExecutor();

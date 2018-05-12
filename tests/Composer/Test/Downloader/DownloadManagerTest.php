@@ -13,22 +13,23 @@
 namespace Composer\Test\Downloader;
 
 use Composer\Downloader\DownloadManager;
+use PHPUnit\Framework\TestCase;
 
-class DownloadManagerTest extends \PHPUnit_Framework_TestCase
+class DownloadManagerTest extends TestCase
 {
     protected $filesystem;
     protected $io;
 
     public function setUp()
     {
-        $this->filesystem = $this->getMock('Composer\Util\Filesystem');
-        $this->io = $this->getMock('Composer\IO\IOInterface');
+        $this->filesystem = $this->getMockBuilder('Composer\Util\Filesystem')->getMock();
+        $this->io = $this->getMockBuilder('Composer\IO\IOInterface')->getMock();
     }
 
     public function testSetGetDownloader()
     {
         $downloader = $this->createDownloaderMock();
-        $manager    = new DownloadManager($this->io, false, $this->filesystem);
+        $manager = new DownloadManager($this->io, false, $this->filesystem);
 
         $manager->setDownloader('test', $downloader);
         $this->assertSame($downloader, $manager->getDownloader('test'));
@@ -755,6 +756,366 @@ class DownloadManagerTest extends \PHPUnit_Framework_TestCase
           ->will($this->returnValue(null)); // There is no downloader for metapackages.
 
         $manager->remove($package, 'vendor/bundles/FOS/UserBundle');
+    }
+
+    /**
+     * @covers Composer\Downloader\DownloadManager::resolvePackageInstallPreference
+     */
+    public function testInstallPreferenceWithoutPreferenceDev()
+    {
+        $package = $this->createPackageMock();
+        $package
+            ->expects($this->once())
+            ->method('getSourceType')
+            ->will($this->returnValue('git'));
+        $package
+            ->expects($this->once())
+            ->method('getDistType')
+            ->will($this->returnValue('pear'));
+        $package
+            ->expects($this->once())
+            ->method('isDev')
+            ->will($this->returnValue(true));
+
+        $package
+            ->expects($this->once())
+            ->method('setInstallationSource')
+            ->with('source');
+
+        $downloader = $this->createDownloaderMock();
+        $downloader
+            ->expects($this->once())
+            ->method('download')
+            ->with($package, 'target_dir');
+
+        $manager = $this->getMockBuilder('Composer\Downloader\DownloadManager')
+            ->setConstructorArgs(array($this->io, false, $this->filesystem))
+            ->setMethods(array('getDownloaderForInstalledPackage'))
+            ->getMock();
+        $manager
+            ->expects($this->once())
+            ->method('getDownloaderForInstalledPackage')
+            ->with($package)
+            ->will($this->returnValue($downloader));
+
+        $manager->download($package, 'target_dir');
+    }
+
+    /**
+     * @covers Composer\Downloader\DownloadManager::resolvePackageInstallPreference
+     */
+    public function testInstallPreferenceWithoutPreferenceNoDev()
+    {
+        $package = $this->createPackageMock();
+        $package
+            ->expects($this->once())
+            ->method('getSourceType')
+            ->will($this->returnValue('git'));
+        $package
+            ->expects($this->once())
+            ->method('getDistType')
+            ->will($this->returnValue('pear'));
+        $package
+            ->expects($this->once())
+            ->method('isDev')
+            ->will($this->returnValue(false));
+
+        $package
+            ->expects($this->once())
+            ->method('setInstallationSource')
+            ->with('dist');
+
+        $downloader = $this->createDownloaderMock();
+        $downloader
+            ->expects($this->once())
+            ->method('download')
+            ->with($package, 'target_dir');
+
+        $manager = $this->getMockBuilder('Composer\Downloader\DownloadManager')
+            ->setConstructorArgs(array($this->io, false, $this->filesystem))
+            ->setMethods(array('getDownloaderForInstalledPackage'))
+            ->getMock();
+        $manager
+            ->expects($this->once())
+            ->method('getDownloaderForInstalledPackage')
+            ->with($package)
+            ->will($this->returnValue($downloader));
+
+        $manager->download($package, 'target_dir');
+    }
+
+    /**
+     * @covers Composer\Downloader\DownloadManager::resolvePackageInstallPreference
+     */
+    public function testInstallPreferenceWithoutMatchDev()
+    {
+        $package = $this->createPackageMock();
+        $package
+            ->expects($this->once())
+            ->method('getSourceType')
+            ->will($this->returnValue('git'));
+        $package
+            ->expects($this->once())
+            ->method('getDistType')
+            ->will($this->returnValue('pear'));
+        $package
+            ->expects($this->once())
+            ->method('isDev')
+            ->will($this->returnValue(true));
+        $package
+            ->expects($this->once())
+            ->method('getName')
+            ->will($this->returnValue('bar/package'));
+        $package
+            ->expects($this->once())
+            ->method('setInstallationSource')
+            ->with('source');
+
+        $downloader = $this->createDownloaderMock();
+        $downloader
+            ->expects($this->once())
+            ->method('download')
+            ->with($package, 'target_dir');
+
+        $manager = $this->getMockBuilder('Composer\Downloader\DownloadManager')
+            ->setConstructorArgs(array($this->io, false, $this->filesystem))
+            ->setMethods(array('getDownloaderForInstalledPackage'))
+            ->getMock();
+        $manager
+            ->expects($this->once())
+            ->method('getDownloaderForInstalledPackage')
+            ->with($package)
+            ->will($this->returnValue($downloader));
+        $manager->setPreferences(array('foo/*' => 'source'));
+
+        $manager->download($package, 'target_dir');
+    }
+
+    /**
+     * @covers Composer\Downloader\DownloadManager::resolvePackageInstallPreference
+     */
+    public function testInstallPreferenceWithoutMatchNoDev()
+    {
+        $package = $this->createPackageMock();
+        $package
+            ->expects($this->once())
+            ->method('getSourceType')
+            ->will($this->returnValue('git'));
+        $package
+            ->expects($this->once())
+            ->method('getDistType')
+            ->will($this->returnValue('pear'));
+        $package
+            ->expects($this->once())
+            ->method('isDev')
+            ->will($this->returnValue(false));
+        $package
+            ->expects($this->once())
+            ->method('getName')
+            ->will($this->returnValue('bar/package'));
+        $package
+            ->expects($this->once())
+            ->method('setInstallationSource')
+            ->with('dist');
+
+        $downloader = $this->createDownloaderMock();
+        $downloader
+            ->expects($this->once())
+            ->method('download')
+            ->with($package, 'target_dir');
+
+        $manager = $this->getMockBuilder('Composer\Downloader\DownloadManager')
+            ->setConstructorArgs(array($this->io, false, $this->filesystem))
+            ->setMethods(array('getDownloaderForInstalledPackage'))
+            ->getMock();
+        $manager
+            ->expects($this->once())
+            ->method('getDownloaderForInstalledPackage')
+            ->with($package)
+            ->will($this->returnValue($downloader));
+        $manager->setPreferences(array('foo/*' => 'source'));
+
+        $manager->download($package, 'target_dir');
+    }
+
+    /**
+     * @covers Composer\Downloader\DownloadManager::resolvePackageInstallPreference
+     */
+    public function testInstallPreferenceWithMatchAutoDev()
+    {
+        $package = $this->createPackageMock();
+        $package
+            ->expects($this->once())
+            ->method('getSourceType')
+            ->will($this->returnValue('git'));
+        $package
+            ->expects($this->once())
+            ->method('getDistType')
+            ->will($this->returnValue('pear'));
+        $package
+            ->expects($this->once())
+            ->method('isDev')
+            ->will($this->returnValue(true));
+        $package
+            ->expects($this->once())
+            ->method('getName')
+            ->will($this->returnValue('foo/package'));
+        $package
+            ->expects($this->once())
+            ->method('setInstallationSource')
+            ->with('source');
+
+        $downloader = $this->createDownloaderMock();
+        $downloader
+            ->expects($this->once())
+            ->method('download')
+            ->with($package, 'target_dir');
+
+        $manager = $this->getMockBuilder('Composer\Downloader\DownloadManager')
+            ->setConstructorArgs(array($this->io, false, $this->filesystem))
+            ->setMethods(array('getDownloaderForInstalledPackage'))
+            ->getMock();
+        $manager
+            ->expects($this->once())
+            ->method('getDownloaderForInstalledPackage')
+            ->with($package)
+            ->will($this->returnValue($downloader));
+        $manager->setPreferences(array('foo/*' => 'auto'));
+
+        $manager->download($package, 'target_dir');
+    }
+
+    /**
+     * @covers Composer\Downloader\DownloadManager::resolvePackageInstallPreference
+     */
+    public function testInstallPreferenceWithMatchAutoNoDev()
+    {
+        $package = $this->createPackageMock();
+        $package
+            ->expects($this->once())
+            ->method('getSourceType')
+            ->will($this->returnValue('git'));
+        $package
+            ->expects($this->once())
+            ->method('getDistType')
+            ->will($this->returnValue('pear'));
+        $package
+            ->expects($this->once())
+            ->method('isDev')
+            ->will($this->returnValue(false));
+        $package
+            ->expects($this->once())
+            ->method('getName')
+            ->will($this->returnValue('foo/package'));
+        $package
+            ->expects($this->once())
+            ->method('setInstallationSource')
+            ->with('dist');
+
+        $downloader = $this->createDownloaderMock();
+        $downloader
+            ->expects($this->once())
+            ->method('download')
+            ->with($package, 'target_dir');
+
+        $manager = $this->getMockBuilder('Composer\Downloader\DownloadManager')
+            ->setConstructorArgs(array($this->io, false, $this->filesystem))
+            ->setMethods(array('getDownloaderForInstalledPackage'))
+            ->getMock();
+        $manager
+            ->expects($this->once())
+            ->method('getDownloaderForInstalledPackage')
+            ->with($package)
+            ->will($this->returnValue($downloader));
+        $manager->setPreferences(array('foo/*' => 'auto'));
+
+        $manager->download($package, 'target_dir');
+    }
+
+    /**
+     * @covers Composer\Downloader\DownloadManager::resolvePackageInstallPreference
+     */
+    public function testInstallPreferenceWithMatchSource()
+    {
+        $package = $this->createPackageMock();
+        $package
+            ->expects($this->once())
+            ->method('getSourceType')
+            ->will($this->returnValue('git'));
+        $package
+            ->expects($this->once())
+            ->method('getDistType')
+            ->will($this->returnValue('pear'));
+        $package
+            ->expects($this->once())
+            ->method('getName')
+            ->will($this->returnValue('foo/package'));
+        $package
+            ->expects($this->once())
+            ->method('setInstallationSource')
+            ->with('source');
+
+        $downloader = $this->createDownloaderMock();
+        $downloader
+            ->expects($this->once())
+            ->method('download')
+            ->with($package, 'target_dir');
+
+        $manager = $this->getMockBuilder('Composer\Downloader\DownloadManager')
+            ->setConstructorArgs(array($this->io, false, $this->filesystem))
+            ->setMethods(array('getDownloaderForInstalledPackage'))
+            ->getMock();
+        $manager
+            ->expects($this->once())
+            ->method('getDownloaderForInstalledPackage')
+            ->with($package)
+            ->will($this->returnValue($downloader));
+        $manager->setPreferences(array('foo/*' => 'source'));
+
+        $manager->download($package, 'target_dir');
+    }
+
+    /**
+     * @covers Composer\Downloader\DownloadManager::resolvePackageInstallPreference
+     */
+    public function testInstallPreferenceWithMatchDist()
+    {
+        $package = $this->createPackageMock();
+        $package
+            ->expects($this->once())
+            ->method('getSourceType')
+            ->will($this->returnValue('git'));
+        $package
+            ->expects($this->once())
+            ->method('getDistType')
+            ->will($this->returnValue('pear'));
+        $package
+            ->expects($this->once())
+            ->method('getName')
+            ->will($this->returnValue('foo/package'));
+        $package
+            ->expects($this->once())
+            ->method('setInstallationSource')
+            ->with('dist');
+
+        $downloader = $this->createDownloaderMock();
+        $downloader
+            ->expects($this->once())
+            ->method('download')
+            ->with($package, 'target_dir');
+
+        $manager = $this->getMockBuilder('Composer\Downloader\DownloadManager')
+            ->setConstructorArgs(array($this->io, false, $this->filesystem))
+            ->setMethods(array('getDownloaderForInstalledPackage'))
+            ->getMock();
+        $manager
+            ->expects($this->once())
+            ->method('getDownloaderForInstalledPackage')
+            ->with($package)
+            ->will($this->returnValue($downloader));
+        $manager->setPreferences(array('foo/*' => 'dist'));
+
+        $manager->download($package, 'target_dir');
     }
 
     private function createDownloaderMock()

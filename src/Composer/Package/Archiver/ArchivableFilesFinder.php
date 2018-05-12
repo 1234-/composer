@@ -13,8 +13,9 @@
 namespace Composer\Package\Archiver;
 
 use Composer\Util\Filesystem;
-
-use Symfony\Component\Finder;
+use FilesystemIterator;
+use Symfony\Component\Finder\Finder;
+use Symfony\Component\Finder\SplFileInfo;
 
 /**
  * A Symfony Finder wrapper which locates files that should go into archives
@@ -27,29 +28,34 @@ use Symfony\Component\Finder;
 class ArchivableFilesFinder extends \FilterIterator
 {
     /**
-     * @var Symfony\Component\Finder\Finder
+     * @var Finder
      */
     protected $finder;
 
     /**
      * Initializes the internal Symfony Finder with appropriate filters
      *
-     * @param string $sources  Path to source files to be archived
-     * @param array  $excludes Composer's own exclude rules from composer.json
+     * @param string $sources       Path to source files to be archived
+     * @param array  $excludes      Composer's own exclude rules from composer.json
+     * @param bool   $ignoreFilters Ignore filters when looking for files
      */
-    public function __construct($sources, array $excludes)
+    public function __construct($sources, array $excludes, $ignoreFilters = false)
     {
         $fs = new Filesystem();
 
         $sources = $fs->normalizePath($sources);
 
-        $filters = array(
-            new HgExcludeFilter($sources),
-            new GitExcludeFilter($sources),
-            new ComposerExcludeFilter($sources, $excludes),
-        );
+        if ($ignoreFilters) {
+            $filters = array();
+        } else {
+            $filters = array(
+                new HgExcludeFilter($sources),
+                new GitExcludeFilter($sources),
+                new ComposerExcludeFilter($sources, $excludes),
+            );
+        }
 
-        $this->finder = new Finder\Finder();
+        $this->finder = new Finder();
 
         $filter = function (\SplFileInfo $file) use ($sources, $filters, $fs) {
             if ($file->isLink() && strpos($file->getLinkTarget(), $sources) !== 0) {
@@ -85,6 +91,15 @@ class ArchivableFilesFinder extends \FilterIterator
 
     public function accept()
     {
-        return !$this->getInnerIterator()->current()->isDir();
+        /** @var SplFileInfo $current */
+        $current = $this->getInnerIterator()->current();
+
+        if (!$current->isDir()) {
+            return true;
+        }
+
+        $iterator = new FilesystemIterator($current, FilesystemIterator::SKIP_DOTS);
+
+        return !$iterator->valid();
     }
 }

@@ -29,7 +29,7 @@ interface ArchiverInterface
      *
      * @return string The path to the written archive file
      */
-    public function archive($sources, $target, $format, array $excludes = array());
+    public function archive($sources, $target, $format, array $excludes = array(), $ignoreFilters = false);
 
     /**
      * Format supported by the archiver.
@@ -37,7 +37,7 @@ interface ArchiverInterface
      * @param string $format     The archive format
      * @param string $sourceType The source type (git, svn, hg, etc.)
      *
-     * @return boolean true if the format is supported by the archiver
+     * @return bool true if the format is supported by the archiver
      */
     public function supports($format, $sourceType);
 }

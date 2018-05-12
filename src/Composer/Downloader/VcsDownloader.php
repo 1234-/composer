@@ -13,7 +13,9 @@
 namespace Composer\Downloader;
 
 use Composer\Config;
+use Composer\Package\Dumper\ArrayDumper;
 use Composer\Package\PackageInterface;
+use Composer\Package\Version\VersionGuesser;
 use Composer\Package\Version\VersionParser;
 use Composer\Util\ProcessExecutor;
 use Composer\IO\IOInterface;
@@ -22,11 +24,15 @@ use Composer\Util\Filesystem;
 /**
  * @author Jordi Boggiano <j.boggiano@seld.be>
  */
-abstract class VcsDownloader implements DownloaderInterface, ChangeReportInterface
+abstract class VcsDownloader implements DownloaderInterface, ChangeReportInterface, VcsCapableDownloaderInterface
 {
+    /** @var IOInterface */
     protected $io;
+    /** @var Config */
     protected $config;
+    /** @var ProcessExecutor */
     protected $process;
+    /** @var Filesystem */
     protected $filesystem;
 
     public function __construct(IOInterface $io, Config $config, ProcessExecutor $process = null, Filesystem $fs = null)
@@ -34,7 +40,7 @@ abstract class VcsDownloader implements DownloaderInterface, ChangeReportInterfa
         $this->io = $io;
         $this->config = $config;
         $this->process = $process ?: new ProcessExecutor($io);
-        $this->filesystem = $fs ?: new Filesystem;
+        $this->filesystem = $fs ?: new Filesystem($this->process);
     }
 
     /**
@@ -54,30 +60,50 @@ abstract class VcsDownloader implements DownloaderInterface, ChangeReportInterfa
             throw new \InvalidArgumentException('Package '.$package->getPrettyName().' is missing reference information');
         }
 
-        $this->io->write("  - Installing <info>" . $package->getName() . "</info> (<comment>" . VersionParser::formatVersion($package) . "</comment>)");
+        $this->io->writeError("  - Installing <info>" . $package->getName() . "</info> (<comment>" . $package->getFullPrettyVersion() . "</comment>): ", false);
         $this->filesystem->emptyDirectory($path);
 
         $urls = $package->getSourceUrls();
         while ($url = array_shift($urls)) {
             try {
                 if (Filesystem::isLocalPath($url)) {
+                    // realpath() below will not understand
+                    // url that starts with "file://"
+                    $needle = 'file://';
+                    $isFileProtocol = false;
+                    if (0 === strpos($url, $needle)) {
+                        $url = substr($url, strlen($needle));
+                        $isFileProtocol = true;
+                    }
+
+                    // realpath() below will not understand %20 spaces etc.
+                    if (false !== strpos($url, '%')) {
+                        $url = rawurldecode($url);
+                    }
+
                     $url = realpath($url);
+
+                    if ($isFileProtocol) {
+                        $url = $needle . $url;
+                    }
                 }
                 $this->doDownload($package, $path, $url);
                 break;
             } catch (\Exception $e) {
+                // rethrow phpunit exceptions to avoid hard to debug bug failures
+                if ($e instanceof \PHPUnit_Framework_Exception) {
+                    throw $e;
+                }
                 if ($this->io->isDebug()) {
-                    $this->io->write('Failed: ['.get_class($e).'] '.$e->getMessage());
+                    $this->io->writeError('Failed: ['.get_class($e).'] '.$e->getMessage());
                 } elseif (count($urls)) {
-                    $this->io->write('    Failed, trying the next URL');
+                    $this->io->writeError('    Failed, trying the next URL');
                 }
                 if (!count($urls)) {
                     throw $e;
                 }
             }
         }
-
-        $this->io->write('');
     }
 
     /**
@@ -100,39 +126,44 @@ abstract class VcsDownloader implements DownloaderInterface, ChangeReportInterfa
             }
             $name .= ' '.$initial->getPrettyVersion();
         } else {
-            $from = VersionParser::formatVersion($initial);
-            $to = VersionParser::formatVersion($target);
+            $from = $initial->getFullPrettyVersion();
+            $to = $target->getFullPrettyVersion();
         }
 
-        $this->io->write("  - Updating <info>" . $name . "</info> (<comment>" . $from . "</comment> => <comment>" . $to . "</comment>)");
+        $actionName = VersionParser::isUpgrade($initial->getVersion(), $target->getVersion()) ? 'Updating' : 'Downgrading';
+        $this->io->writeError("  - " . $actionName . " <info>" . $name . "</info> (<comment>" . $from . "</comment> => <comment>" . $to . "</comment>): ", false);
 
         $this->cleanChanges($initial, $path, true);
         $urls = $target->getSourceUrls();
+
+        $exception = null;
         while ($url = array_shift($urls)) {
             try {
                 if (Filesystem::isLocalPath($url)) {
                     $url = realpath($url);
                 }
                 $this->doUpdate($initial, $target, $path, $url);
-                break;
-            } catch (\Exception $e) {
-                if ($this->io->isDebug()) {
-                    $this->io->write('Failed: ['.get_class($e).'] '.$e->getMessage());
-                } elseif (count($urls)) {
-                    $this->io->write('    Failed, trying the next URL');
-                } else {
-                    // in case of failed update, try to reapply the changes before aborting
-                    $this->reapplyChanges($path);
 
-                    throw $e;
+                $exception = null;
+                break;
+            } catch (\Exception $exception) {
+                // rethrow phpunit exceptions to avoid hard to debug bug failures
+                if ($exception instanceof \PHPUnit_Framework_Exception) {
+                    throw $exception;
+                }
+                if ($this->io->isDebug()) {
+                    $this->io->writeError('Failed: ['.get_class($exception).'] '.$exception->getMessage());
+                } elseif (count($urls)) {
+                    $this->io->writeError('    Failed, trying the next URL');
                 }
             }
         }
 
         $this->reapplyChanges($path);
 
-        // print the commit logs if in verbose mode
-        if ($this->io->isVerbose()) {
+        // print the commit logs if in verbose mode and VCS metadata is present
+        // because in case of missing metadata code would trigger another exception
+        if (!$exception && $this->io->isVerbose() && $this->hasMetadataRepository($path)) {
             $message = 'Pulling in changes:';
             $logs = $this->getCommitLogs($initial->getSourceReference(), $target->getSourceReference(), $path);
 
@@ -146,12 +177,17 @@ abstract class VcsDownloader implements DownloaderInterface, ChangeReportInterfa
                     return '      ' . $line;
                 }, explode("\n", $logs)));
 
-                $this->io->write('    '.$message);
-                $this->io->write($logs);
+                // escape angle brackets for proper output in the console
+                $logs = str_replace('<', '\<', $logs);
+
+                $this->io->writeError('    '.$message);
+                $this->io->writeError($logs);
             }
         }
 
-        $this->io->write('');
+        if (!$urls && $exception) {
+            throw $exception;
+        }
     }
 
     /**
@@ -159,7 +195,7 @@ abstract class VcsDownloader implements DownloaderInterface, ChangeReportInterfa
      */
     public function remove(PackageInterface $package, $path)
     {
-        $this->io->write("  - Removing <info>" . $package->getName() . "</info> (<comment>" . $package->getPrettyVersion() . "</comment>)");
+        $this->io->writeError("  - Removing <info>" . $package->getName() . "</info> (<comment>" . $package->getPrettyVersion() . "</comment>)");
         $this->cleanChanges($package, $path, false);
         if (!$this->filesystem->removeDirectory($path)) {
             throw new \RuntimeException('Could not completely delete '.$path.', aborting.');
@@ -173,6 +209,21 @@ abstract class VcsDownloader implements DownloaderInterface, ChangeReportInterfa
     public function setOutputProgress($outputProgress)
     {
         return $this;
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function getVcsReference(PackageInterface $package, $path)
+    {
+        $parser = new VersionParser;
+        $guesser = new VersionGuesser($this->config, $this->process, $parser);
+        $dumper = new ArrayDumper;
+
+        $packageConfig = $dumper->dump($package);
+        if ($packageVersion = $guesser->guessVersion($packageConfig, $path)) {
+            return $packageVersion['commit'];
+        }
     }
 
     /**
@@ -230,4 +281,13 @@ abstract class VcsDownloader implements DownloaderInterface, ChangeReportInterfa
      * @return string
      */
     abstract protected function getCommitLogs($fromReference, $toReference, $path);
+
+    /**
+     * Checks if VCS metadata repository has been initialized
+     * repository example: .git|.svn|.hg
+     *
+     * @param  string $path
+     * @return bool
+     */
+    abstract protected function hasMetadataRepository($path);
 }

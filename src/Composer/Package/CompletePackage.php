@@ -172,15 +172,15 @@ class CompletePackage extends Package implements CompletePackageInterface
     }
 
     /**
-     * @return boolean
+     * @return bool
      */
     public function isAbandoned()
     {
-        return (boolean) $this->abandoned;
+        return (bool) $this->abandoned;
     }
 
     /**
-     * @param boolean|string $abandoned
+     * @param bool|string $abandoned
      */
     public function setAbandoned($abandoned)
     {
@@ -194,6 +194,6 @@ class CompletePackage extends Package implements CompletePackageInterface
      */
     public function getReplacementPackage()
     {
-        return is_string($this->abandoned)? $this->abandoned : null;
+        return is_string($this->abandoned) ? $this->abandoned : null;
     }
 }

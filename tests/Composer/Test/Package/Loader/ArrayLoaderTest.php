@@ -14,12 +14,18 @@ namespace Composer\Test\Package\Loader;
 
 use Composer\Package\Loader\ArrayLoader;
 use Composer\Package\Dumper\ArrayDumper;
+use PHPUnit\Framework\TestCase;
 
-class ArrayLoaderTest extends \PHPUnit_Framework_TestCase
+class ArrayLoaderTest extends TestCase
 {
+    /**
+     * @var ArrayLoader
+     */
+    private $loader;
+
     public function setUp()
     {
-        $this->loader = new ArrayLoader(null, true);
+        $this->loader = new ArrayLoader(null);
     }
 
     public function testSelfVersion()
@@ -77,9 +83,9 @@ class ArrayLoaderTest extends \PHPUnit_Framework_TestCase
         $this->assertEquals('1.2.3.4', $package->getVersion());
     }
 
-    public function testParseDump()
+    public function testParseDumpProvider()
     {
-        $config = array(
+        $validConfig = array(
             'name' => 'A/B',
             'version' => '1.2.3',
             'version_normalized' => '1.2.3.0',
@@ -118,12 +124,57 @@ class ArrayLoaderTest extends \PHPUnit_Framework_TestCase
                 'exclude' => array('/foo/bar', 'baz', '!/foo/bar/baz'),
             ),
             'transport-options' => array('ssl' => array('local_cert' => '/opt/certs/test.pem')),
-            'abandoned' => 'foo/bar'
+            'abandoned' => 'foo/bar',
         );
 
+        return array(array($validConfig));
+    }
+
+    protected function fixConfigWhenLoadConfigIsFalse($config)
+    {
+        $expectedConfig = $config;
+        unset($expectedConfig['transport-options']);
+
+        return $expectedConfig;
+    }
+
+    /**
+     * The default parser should default to loading the config as this
+     * allows require-dev libraries to have transport options included.
+     *
+     * @dataProvider testParseDumpProvider
+     */
+    public function testParseDumpDefaultLoadConfig($config)
+    {
         $package = $this->loader->load($config);
         $dumper = new ArrayDumper;
-        $this->assertEquals($config, $dumper->dump($package));
+        $expectedConfig = $config;
+        $expectedConfig = $this->fixConfigWhenLoadConfigIsFalse($config);
+        $this->assertEquals($expectedConfig, $dumper->dump($package));
+    }
+
+    /**
+     * @dataProvider testParseDumpProvider
+     */
+    public function testParseDumpTrueLoadConfig($config)
+    {
+        $loader = new ArrayLoader(null, true);
+        $package = $loader->load($config);
+        $dumper = new ArrayDumper;
+        $expectedConfig = $config;
+        $this->assertEquals($expectedConfig, $dumper->dump($package));
+    }
+
+    /**
+     * @dataProvider testParseDumpProvider
+     */
+    public function testParseDumpFalseLoadConfig($config)
+    {
+        $loader = new ArrayLoader(null, false);
+        $package = $loader->load($config);
+        $dumper = new ArrayDumper;
+        $expectedConfig = $this->fixConfigWhenLoadConfigIsFalse($config);
+        $this->assertEquals($expectedConfig, $dumper->dump($package));
     }
 
     public function testPackageWithBranchAlias()
@@ -138,6 +189,50 @@ class ArrayLoaderTest extends \PHPUnit_Framework_TestCase
 
         $this->assertInstanceOf('Composer\Package\AliasPackage', $package);
         $this->assertEquals('1.0.x-dev', $package->getPrettyVersion());
+
+        $config = array(
+            'name' => 'A',
+            'version' => 'dev-master',
+            'extra' => array('branch-alias' => array('dev-master' => '1.0-dev')),
+        );
+
+        $package = $this->loader->load($config);
+
+        $this->assertInstanceOf('Composer\Package\AliasPackage', $package);
+        $this->assertEquals('1.0.x-dev', $package->getPrettyVersion());
+
+        $config = array(
+            'name' => 'B',
+            'version' => '4.x-dev',
+            'extra' => array('branch-alias' => array('4.x-dev' => '4.0.x-dev')),
+        );
+
+        $package = $this->loader->load($config);
+
+        $this->assertInstanceOf('Composer\Package\AliasPackage', $package);
+        $this->assertEquals('4.0.x-dev', $package->getPrettyVersion());
+
+        $config = array(
+            'name' => 'B',
+            'version' => '4.x-dev',
+            'extra' => array('branch-alias' => array('4.x-dev' => '4.0-dev')),
+        );
+
+        $package = $this->loader->load($config);
+
+        $this->assertInstanceOf('Composer\Package\AliasPackage', $package);
+        $this->assertEquals('4.0.x-dev', $package->getPrettyVersion());
+
+        $config = array(
+            'name' => 'C',
+            'version' => '4.x-dev',
+            'extra' => array('branch-alias' => array('4.x-dev' => '3.4.x-dev')),
+        );
+
+        $package = $this->loader->load($config);
+
+        $this->assertInstanceOf('Composer\Package\CompletePackage', $package);
+        $this->assertEquals('4.x-dev', $package->getPrettyVersion());
     }
 
     public function testAbandoned()
@@ -145,7 +240,7 @@ class ArrayLoaderTest extends \PHPUnit_Framework_TestCase
         $config = array(
             'name' => 'A',
             'version' => '1.2.3.4',
-            'abandoned' => 'foo/bar'
+            'abandoned' => 'foo/bar',
         );
 
         $package = $this->loader->load($config);
@@ -157,10 +252,50 @@ class ArrayLoaderTest extends \PHPUnit_Framework_TestCase
     {
         $config = array(
             'name' => 'A',
-            'version' => '1.2.3.4'
+            'version' => '1.2.3.4',
         );
 
         $package = $this->loader->load($config);
         $this->assertFalse($package->isAbandoned());
+    }
+
+    public function pluginApiVersions()
+    {
+        return array(
+            array('1.0'),
+            array('1.0.0'),
+            array('1.0.0.0'),
+            array('1'),
+            array('=1.0.0'),
+            array('==1.0'),
+            array('~1.0.0'),
+            array('*'),
+            array('3.0.*'),
+            array('@stable'),
+            array('1.0.0@stable'),
+            array('^5.1'),
+            array('>=1.0.0 <2.5'),
+            array('x'),
+            array('1.0.0-dev'),
+        );
+    }
+
+    /**
+     * @dataProvider pluginApiVersions
+     */
+    public function testPluginApiVersionAreKeptAsDeclared($apiVersion)
+    {
+        $links = $this->loader->parseLinks('Plugin', '9.9.9', '', array('composer-plugin-api' => $apiVersion));
+
+        $this->assertArrayHasKey('composer-plugin-api', $links);
+        $this->assertSame($apiVersion, $links['composer-plugin-api']->getConstraint()->getPrettyString());
+    }
+
+    public function testPluginApiVersionDoesSupportSelfVersion()
+    {
+        $links = $this->loader->parseLinks('Plugin', '6.6.6', '', array('composer-plugin-api' => 'self.version'));
+
+        $this->assertArrayHasKey('composer-plugin-api', $links);
+        $this->assertSame('6.6.6', $links['composer-plugin-api']->getConstraint()->getPrettyString());
     }
 }

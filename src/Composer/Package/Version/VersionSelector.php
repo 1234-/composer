@@ -13,14 +13,17 @@
 namespace Composer\Package\Version;
 
 use Composer\DependencyResolver\Pool;
+use Composer\Package\BasePackage;
 use Composer\Package\PackageInterface;
 use Composer\Package\Loader\ArrayLoader;
 use Composer\Package\Dumper\ArrayDumper;
+use Composer\Semver\Constraint\Constraint;
 
 /**
  * Selects the best possible version for a package
  *
  * @author Ryan Weaver <ryan@knpuniversity.com>
+ * @author Jordi Boggiano <j.boggiano@seld.be>
  */
 class VersionSelector
 {
@@ -39,12 +42,23 @@ class VersionSelector
      *
      * @param  string                $packageName
      * @param  string                $targetPackageVersion
+     * @param  string                $targetPhpVersion
+     * @param  string                $preferredStability
      * @return PackageInterface|bool
      */
-    public function findBestCandidate($packageName, $targetPackageVersion = null)
+    public function findBestCandidate($packageName, $targetPackageVersion = null, $targetPhpVersion = null, $preferredStability = 'stable')
     {
         $constraint = $targetPackageVersion ? $this->getParser()->parseConstraints($targetPackageVersion) : null;
-        $candidates = $this->pool->whatProvides($packageName, $constraint, true);
+        $candidates = $this->pool->whatProvides(strtolower($packageName), $constraint, true);
+
+        if ($targetPhpVersion) {
+            $phpConstraint = new Constraint('==', $this->getParser()->normalize($targetPhpVersion));
+            $candidates = array_filter($candidates, function ($pkg) use ($phpConstraint) {
+                $reqs = $pkg->getRequires();
+
+                return !isset($reqs['php']) || $reqs['php']->getConstraint()->matches($phpConstraint);
+            });
+        }
 
         if (!$candidates) {
             return false;
@@ -52,7 +66,32 @@ class VersionSelector
 
         // select highest version if we have many
         $package = reset($candidates);
+        $minPriority = BasePackage::$stabilities[$preferredStability];
         foreach ($candidates as $candidate) {
+            $candidatePriority = $candidate->getStabilityPriority();
+            $currentPriority = $package->getStabilityPriority();
+
+            // candidate is less stable than our preferred stability,
+            // and current package is more stable than candidate, skip it
+            if ($minPriority < $candidatePriority && $currentPriority < $candidatePriority) {
+                continue;
+            }
+
+            // candidate is less stable than our preferred stability,
+            // and current package is less stable than candidate, select candidate
+            if ($minPriority < $candidatePriority && $candidatePriority < $currentPriority) {
+                $package = $candidate;
+                continue;
+            }
+
+            // candidate is more stable than our preferred stability,
+            // and current package is less stable than preferred stability, select candidate
+            if ($minPriority >= $candidatePriority && $minPriority < $currentPriority) {
+                $package = $candidate;
+                continue;
+            }
+
+            // select highest version of the two
             if (version_compare($package->getVersion(), $candidate->getVersion(), '<')) {
                 $package = $candidate;
             }
@@ -66,11 +105,11 @@ class VersionSelector
      * that should be used, for example, in composer.json.
      *
      * For example:
-     *  * 1.2.1         -> ~1.2
-     *  * 1.2           -> ~1.2
-     *  * v3.2.1        -> ~3.2
-     *  * 2.0-beta.1    -> ~2.0@beta
-     *  * dev-master    -> ~2.1@dev      (dev version with alias)
+     *  * 1.2.1         -> ^1.2
+     *  * 1.2           -> ^1.2
+     *  * v3.2.1        -> ^3.2
+     *  * 2.0-beta.1    -> ^2.0@beta
+     *  * dev-master    -> ^2.1@dev      (dev version with alias)
      *  * dev-master    -> dev-master    (dev versions are untouched)
      *
      * @param  PackageInterface $package
@@ -103,10 +142,15 @@ class VersionSelector
         // attempt to transform 2.1.1 to 2.1
         // this allows you to upgrade through minor versions
         $semanticVersionParts = explode('.', $version);
+
         // check to see if we have a semver-looking version
         if (count($semanticVersionParts) == 4 && preg_match('{^0\D?}', $semanticVersionParts[3])) {
             // remove the last parts (i.e. the patch version number and any extra)
-            unset($semanticVersionParts[2], $semanticVersionParts[3]);
+            if ($semanticVersionParts[0] === '0') {
+                unset($semanticVersionParts[3]);
+            } else {
+                unset($semanticVersionParts[2], $semanticVersionParts[3]);
+            }
             $version = implode('.', $semanticVersionParts);
         } else {
             return $prettyVersion;
@@ -117,8 +161,8 @@ class VersionSelector
             $version .= '@'.$stability;
         }
 
-        // 2.1 -> ~2.1
-        return '~'.$version;
+        // 2.1 -> ^2.1
+        return '^' . $version;
     }
 
     private function getParser()

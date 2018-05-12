@@ -54,7 +54,7 @@ class Svn
     protected $process;
 
     /**
-     * @var integer
+     * @var int
      */
     protected $qtyAuthTries = 0;
 
@@ -62,6 +62,11 @@ class Svn
      * @var \Composer\Config
      */
     protected $config;
+
+    /**
+     * @var string|null
+     */
+    static private $version;
 
     /**
      * @param string                   $url
@@ -72,7 +77,7 @@ class Svn
     public function __construct($url, IOInterface $io, Config $config, ProcessExecutor $process = null)
     {
         $this->url = $url;
-        $this->io  = $io;
+        $this->io = $io;
         $this->config = $config;
         $this->process = $process ?: new ProcessExecutor;
     }
@@ -81,10 +86,11 @@ class Svn
     {
         // clean up env for OSX, see https://github.com/composer/composer/issues/2146#issuecomment-35478940
         putenv("DYLD_LIBRARY_PATH");
+        unset($_SERVER['DYLD_LIBRARY_PATH']);
     }
 
     /**
-     * Execute an SVN command and try to fix up the process with credentials
+     * Execute an SVN remote command and try to fix up the process with credentials
      * if necessary.
      *
      * @param string $command SVN command to run
@@ -93,13 +99,40 @@ class Svn
      * @param string $path    Target for a checkout
      * @param bool   $verbose Output all output to the user
      *
-     * @return string
-     *
      * @throws \RuntimeException
+     * @return string
      */
     public function execute($command, $url, $cwd = null, $path = null, $verbose = false)
     {
-        $svnCommand = $this->getCommand($command, $url, $path);
+        // Ensure we are allowed to use this URL by config
+        $this->config->prohibitUrlByConfig($url, $this->io);
+
+        return $this->executeWithAuthRetry($command, $cwd, $url, $path, $verbose);
+    }
+
+    /**
+     * Execute an SVN local command and try to fix up the process with credentials
+     * if necessary.
+     *
+     * @param string $command SVN command to run
+     * @param string $path    Path argument passed thru to the command
+     * @param string $cwd     Working directory
+     * @param bool   $verbose Output all output to the user
+     *
+     * @throws \RuntimeException
+     * @return string
+     */
+    public function executeLocal($command, $path, $cwd = null, $verbose = false)
+    {
+        // A local command has no remote url
+        return $this->executeWithAuthRetry($command, $cwd, '', $path, $verbose);
+    }
+
+    private function executeWithAuthRetry($svnCommand, $cwd, $url, $path, $verbose)
+    {
+        // Regenerate the command at each try, to use the newly user-provided credentials
+        $command = $this->getCommand($svnCommand, $url, $path);
+
         $output = null;
         $io = $this->io;
         $handler = function ($type, $buffer) use (&$output, $io, $verbose) {
@@ -111,24 +144,23 @@ class Svn
             }
             $output .= $buffer;
             if ($verbose) {
-                $io->write($buffer, false);
+                $io->writeError($buffer, false);
             }
         };
-        $status = $this->process->execute($svnCommand, $handler, $cwd);
+        $status = $this->process->execute($command, $handler, $cwd);
         if (0 === $status) {
             return $output;
         }
 
-        if (empty($output)) {
-            $output = $this->process->getErrorOutput();
-        }
+        $errorOutput = $this->process->getErrorOutput();
+        $fullOutput = implode("\n", array($output, $errorOutput));
 
         // the error is not auth-related
-        if (false === stripos($output, 'Could not authenticate to server:')
-            && false === stripos($output, 'authorization failed')
-            && false === stripos($output, 'svn: E170001:')
-            && false === stripos($output, 'svn: E215004:')) {
-            throw new \RuntimeException($output);
+        if (false === stripos($fullOutput, 'Could not authenticate to server:')
+            && false === stripos($fullOutput, 'authorization failed')
+            && false === stripos($fullOutput, 'svn: E170001:')
+            && false === stripos($fullOutput, 'svn: E215004:')) {
+            throw new \RuntimeException($fullOutput);
         }
 
         if (!$this->hasAuth()) {
@@ -138,16 +170,16 @@ class Svn
         // try to authenticate if maximum quantity of tries not reached
         if ($this->qtyAuthTries++ < self::MAX_QTY_AUTH_TRIES) {
             // restart the process
-            return $this->execute($command, $url, $cwd, $path, $verbose);
+            return $this->executeWithAuthRetry($svnCommand, $cwd, $url, $path, $verbose);
         }
 
         throw new \RuntimeException(
-            'wrong credentials provided ('.$output.')'
+            'wrong credentials provided ('.$fullOutput.')'
         );
     }
 
     /**
-     * @param boolean $cacheCredentials
+     * @param bool $cacheCredentials
      */
     public function setCacheCredentials($cacheCredentials)
     {
@@ -157,8 +189,8 @@ class Svn
     /**
      * Repositories requests credentials, let's put them in.
      *
-     * @return \Composer\Util\Svn
      * @throws \RuntimeException
+     * @return \Composer\Util\Svn
      */
     protected function doAuthDance()
     {
@@ -169,7 +201,7 @@ class Svn
             );
         }
 
-        $this->io->write("The Subversion server ({$this->url}) requested credentials:");
+        $this->io->writeError("The Subversion server ({$this->url}) requested credentials:");
 
         $this->hasAuth = true;
         $this->credentials['username'] = $this->io->ask("Username: ");
@@ -229,8 +261,8 @@ class Svn
     /**
      * Get the password for the svn command. Can be empty.
      *
-     * @return string
      * @throws \LogicException
+     * @return string
      */
     protected function getPassword()
     {
@@ -244,8 +276,8 @@ class Svn
     /**
      * Get the username for the svn command.
      *
-     * @return string
      * @throws \LogicException
+     * @return string
      */
     protected function getUsername()
     {
@@ -326,5 +358,23 @@ class Svn
         }
 
         return $this->hasAuth = true;
+    }
+
+    /**
+     * Returns the version of the svn binary contained in PATH
+     *
+     * @return string|null
+     */
+    public function binaryVersion()
+    {
+        if (!self::$version) {
+            if (0 === $this->process->execute('svn --version', $output)) {
+                if (preg_match('{(\d+(?:\.\d+)+)}', $output, $match)) {
+                    self::$version = $match[1];
+                }
+            }
+        }
+
+        return self::$version;
     }
 }

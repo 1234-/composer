@@ -10,8 +10,9 @@
  * file that was distributed with this source code.
  */
 
-namespace Composer\Repository;
+namespace Composer\Test\Repository;
 
+use Composer\Repository\ArtifactRepository;
 use Composer\TestCase;
 use Composer\IO\NullIO;
 use Composer\Config;
@@ -19,6 +20,14 @@ use Composer\Package\BasePackage;
 
 class ArtifactRepositoryTest extends TestCase
 {
+    public function setUp()
+    {
+        parent::setUp();
+        if (!extension_loaded('zip')) {
+            $this->markTestSkipped('You need the zip extension to run this test.');
+        }
+    }
+
     public function testExtractsConfigsFromZipArchives()
     {
         $expectedPackages = array(
@@ -52,7 +61,7 @@ class ArtifactRepositoryTest extends TestCase
         $repo = new ArtifactRepository($coordinates, new NullIO(), new Config());
 
         foreach ($repo->getPackages() as $package) {
-            $this->assertTrue(strpos($package->getDistUrl(), $absolutePath) === 0);
+            $this->assertSame(strpos($package->getDistUrl(), strtr($absolutePath, '\\', '/')), 0);
         }
     }
 
@@ -63,7 +72,7 @@ class ArtifactRepositoryTest extends TestCase
         $repo = new ArtifactRepository($coordinates, new NullIO(), new Config());
 
         foreach ($repo->getPackages() as $package) {
-            $this->assertTrue(strpos($package->getDistUrl(), $relativePath) === 0);
+            $this->assertSame(strpos($package->getDistUrl(), $relativePath), 0);
         }
     }
 }

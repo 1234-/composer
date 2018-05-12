@@ -14,21 +14,44 @@ namespace Composer\Test\Repository\Vcs;
 
 use Composer\Repository\Vcs\SvnDriver;
 use Composer\Config;
+use Composer\TestCase;
+use Composer\Util\Filesystem;
+use Composer\Util\Platform;
 
-class SvnDriverTest extends \PHPUnit_Framework_TestCase
+class SvnDriverTest extends TestCase
 {
+    protected $home;
+    protected $config;
+
+    public function setUp()
+    {
+        $this->home = $this->getUniqueTmpDirectory();
+        $this->config = new Config();
+        $this->config->merge(array(
+            'config' => array(
+                'home' => $this->home,
+            ),
+        ));
+    }
+
+    public function tearDown()
+    {
+        $fs = new Filesystem();
+        $fs->removeDirectory($this->home);
+    }
+
     /**
      * @expectedException RuntimeException
      */
     public function testWrongCredentialsInUrl()
     {
-        $console = $this->getMock('Composer\IO\IOInterface');
+        $console = $this->getMockBuilder('Composer\IO\IOInterface')->getMock();
 
-        $output  = "svn: OPTIONS of 'http://corp.svn.local/repo':";
+        $output = "svn: OPTIONS of 'https://corp.svn.local/repo':";
         $output .= " authorization failed: Could not authenticate to server:";
-        $output .= " rejected Basic challenge (http://corp.svn.local/)";
+        $output .= " rejected Basic challenge (https://corp.svn.local/)";
 
-        $process = $this->getMock('Composer\Util\ProcessExecutor');
+        $process = $this->getMockBuilder('Composer\Util\ProcessExecutor')->getMock();
         $process->expects($this->at(1))
             ->method('execute')
             ->will($this->returnValue(1));
@@ -39,23 +62,17 @@ class SvnDriverTest extends \PHPUnit_Framework_TestCase
             ->method('execute')
             ->will($this->returnValue(0));
 
-        $config = new Config();
-        $config->merge(array(
-            'config' => array(
-                'home' => sys_get_temp_dir() . '/composer-test',
-            ),
-        ));
         $repoConfig = array(
-            'url' => 'http://till:secret@corp.svn.local/repo',
+            'url' => 'https://till:secret@corp.svn.local/repo',
         );
 
-        $svn = new SvnDriver($repoConfig, $console, $config, $process);
+        $svn = new SvnDriver($repoConfig, $console, $this->config, $process);
         $svn->initialize();
     }
 
     private function getCmd($cmd)
     {
-        if (defined('PHP_WINDOWS_VERSION_BUILD')) {
+        if (Platform::isWindows()) {
             return strtr($cmd, "'", '"');
         }
 
@@ -78,7 +95,7 @@ class SvnDriverTest extends \PHPUnit_Framework_TestCase
     public function testSupport($url, $assertion)
     {
         $config = new Config();
-        $result = SvnDriver::supports($this->getMock('Composer\IO\IOInterface'), $config, $url);
+        $result = SvnDriver::supports($this->getMockBuilder('Composer\IO\IOInterface')->getMock(), $config, $url);
         $this->assertEquals($assertion, $result);
     }
 }

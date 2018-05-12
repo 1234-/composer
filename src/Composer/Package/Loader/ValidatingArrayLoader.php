@@ -14,17 +14,19 @@ namespace Composer\Package\Loader;
 
 use Composer\Package;
 use Composer\Package\BasePackage;
-use Composer\Package\LinkConstraint\VersionConstraint;
+use Composer\Semver\Constraint\Constraint;
 use Composer\Package\Version\VersionParser;
 use Composer\Repository\PlatformRepository;
+use Composer\Spdx\SpdxLicenses;
 
 /**
  * @author Jordi Boggiano <j.boggiano@seld.be>
  */
 class ValidatingArrayLoader implements LoaderInterface
 {
-    const CHECK_ALL = 1;
+    const CHECK_ALL = 3;
     const CHECK_UNBOUND_CONSTRAINTS = 1;
+    const CHECK_STRICT_CONSTRAINTS = 2;
 
     private $loader;
     private $versionParser;
@@ -63,30 +65,69 @@ class ValidatingArrayLoader implements LoaderInterface
             }
         }
 
-        $this->validateRegex('type', '[A-Za-z0-9-]+');
-        $this->validateString('target-dir');
-        $this->validateArray('extra');
-        $this->validateFlatArray('bin');
-        $this->validateArray('scripts'); // TODO validate event names & listener syntax
-        $this->validateString('description');
-        $this->validateUrl('homepage');
-        $this->validateFlatArray('keywords', '[A-Za-z0-9 ._-]+');
-
-        if (isset($this->config['license'])) {
-            if (is_string($this->config['license'])) {
-                $this->validateRegex('license', '[A-Za-z0-9+. ()-]+');
-            } else {
-                $this->validateFlatArray('license', '[A-Za-z0-9+. ()-]+');
+        if (!empty($this->config['config']['platform'])) {
+            foreach ((array) $this->config['config']['platform'] as $key => $platform) {
+                try {
+                    $this->versionParser->normalize($platform);
+                } catch (\Exception $e) {
+                    $this->errors[] = 'config.platform.' . $key . ' : invalid value ('.$platform.'): '.$e->getMessage();
+                }
             }
         }
 
+        $this->validateRegex('type', '[A-Za-z0-9-]+');
+        $this->validateString('target-dir');
+        $this->validateArray('extra');
+
+        if (isset($this->config['bin'])) {
+            if (is_string($this->config['bin'])) {
+                $this->validateString('bin');
+            } else {
+                $this->validateFlatArray('bin');
+            }
+        }
+
+        $this->validateArray('scripts'); // TODO validate event names & listener syntax
+        $this->validateString('description');
+        $this->validateUrl('homepage');
+        $this->validateFlatArray('keywords', '[\p{N}\p{L} ._-]+');
+
+        $releaseDate = null;
         $this->validateString('time');
         if (!empty($this->config['time'])) {
             try {
-                $date = new \DateTime($this->config['time'], new \DateTimeZone('UTC'));
+                $releaseDate = new \DateTime($this->config['time'], new \DateTimeZone('UTC'));
             } catch (\Exception $e) {
                 $this->errors[] = 'time : invalid value ('.$this->config['time'].'): '.$e->getMessage();
                 unset($this->config['time']);
+            }
+        }
+
+        // check for license validity on newly updated branches
+        if (isset($this->config['license']) && (!$releaseDate || $releaseDate->getTimestamp() >= strtotime('-8days'))) {
+            if (is_array($this->config['license']) || is_string($this->config['license'])) {
+                $licenses = (array) $this->config['license'];
+
+                // strip proprietary since it's not a valid SPDX identifier, but is accepted by composer
+                foreach ($licenses as $key => $license) {
+                    if ('proprietary' === $license) {
+                        unset($licenses[$key]);
+                    }
+                }
+
+                $licenseValidator = new SpdxLicenses();
+                if (count($licenses) === 1 && !$licenseValidator->validate($licenses) && $licenseValidator->validate(trim($licenses[0]))) {
+                    $this->warnings[] = sprintf(
+                        'License %s must not contain extra spaces, make sure to trim it.',
+                        json_encode($this->config['license'])
+                    );
+                } elseif (array() !== $licenses && !$licenseValidator->validate($licenses)) {
+                    $this->warnings[] = sprintf(
+                        'License %s is not a valid SPDX license identifier, see https://spdx.org/licenses/ if you use an open license.' . PHP_EOL .
+                        'If the software is closed-source, you may use "proprietary" as license.',
+                        json_encode($this->config['license'])
+                    );
+                }
             }
         }
 
@@ -121,7 +162,7 @@ class ValidatingArrayLoader implements LoaderInterface
         }
 
         if ($this->validateArray('support') && !empty($this->config['support'])) {
-            foreach (array('issues', 'forum', 'wiki', 'source', 'email', 'irc') as $key) {
+            foreach (array('issues', 'forum', 'wiki', 'source', 'email', 'irc', 'docs', 'rss') as $key) {
                 if (isset($this->config['support'][$key]) && !is_string($this->config['support'][$key])) {
                     $this->errors[] = 'support.'.$key.' : invalid value, must be a string';
                     unset($this->config['support'][$key]);
@@ -138,7 +179,7 @@ class ValidatingArrayLoader implements LoaderInterface
                 unset($this->config['support']['irc']);
             }
 
-            foreach (array('issues', 'forum', 'wiki', 'source') as $key) {
+            foreach (array('issues', 'forum', 'wiki', 'source', 'docs') as $key) {
                 if (isset($this->config['support'][$key]) && !$this->filterUrl($this->config['support'][$key])) {
                     $this->warnings[] = 'support.'.$key.' : invalid value ('.$this->config['support'][$key].'), must be an http/https URL';
                     unset($this->config['support'][$key]);
@@ -149,7 +190,8 @@ class ValidatingArrayLoader implements LoaderInterface
             }
         }
 
-        $unboundConstraint = new VersionConstraint('=', $this->versionParser->normalize('dev-master'));
+        $unboundConstraint = new Constraint('=', $this->versionParser->normalize('dev-master'));
+        $stableConstraint = new Constraint('=', '1.0.0');
 
         foreach (array_keys(BasePackage::$supportedLinkTypes) as $linkType) {
             if ($this->validateArray($linkType) && isset($this->config[$linkType])) {
@@ -177,6 +219,14 @@ class ValidatingArrayLoader implements LoaderInterface
                             && !preg_match(PlatformRepository::PLATFORM_PACKAGE_REGEX, $package)
                         ) {
                             $this->warnings[] = $linkType.'.'.$package.' : unbound version constraints ('.$constraint.') should be avoided';
+                        } elseif (
+                            // check requires for exact constraints
+                            ($this->flags & self::CHECK_STRICT_CONSTRAINTS)
+                            && 'require' === $linkType
+                            && substr($linkConstraint, 0, 1) === '='
+                            && $stableConstraint->versionCompare($stableConstraint, $linkConstraint, '<=')
+                        ) {
+                            $this->warnings[] = $linkType.'.'.$package.' : exact version constraints ('.$constraint.') should be avoided if the package follows semantic versioning';
                         }
                     }
                 }
@@ -200,7 +250,7 @@ class ValidatingArrayLoader implements LoaderInterface
         }
 
         if ($this->validateArray('autoload') && !empty($this->config['autoload'])) {
-            $types = array('psr-0', 'psr-4', 'classmap', 'files');
+            $types = array('psr-0', 'psr-4', 'classmap', 'files', 'exclude-from-classmap');
             foreach ($this->config['autoload'] as $type => $typeConfig) {
                 if (!in_array($type, $types)) {
                     $this->errors[] = 'autoload : invalid value ('.$type.'), must be one of '.implode(', ', $types);
@@ -209,7 +259,7 @@ class ValidatingArrayLoader implements LoaderInterface
                 if ($type === 'psr-4') {
                     foreach ($typeConfig as $namespace => $dirs) {
                         if ($namespace !== '' && '\\' !== substr($namespace, -1)) {
-                            $this->errors[] = 'autoload.psr-4 : invalid value ('.$namespace.'), namespaces must end with a namespace separator, should be '.$namespace.'\\';
+                            $this->errors[] = 'autoload.psr-4 : invalid value ('.$namespace.'), namespaces must end with a namespace separator, should be '.$namespace.'\\\\';
                         }
                     }
                 }
@@ -250,6 +300,17 @@ class ValidatingArrayLoader implements LoaderInterface
                     $validatedTargetBranch = $this->versionParser->normalizeBranch(substr($targetBranch, 0, -4));
                     if ('-dev' !== substr($validatedTargetBranch, -4)) {
                         $this->warnings[] = 'extra.branch-alias.'.$sourceBranch.' : the target branch ('.$targetBranch.') must be a parseable number like 2.0-dev';
+                        unset($this->config['extra']['branch-alias'][$sourceBranch]);
+
+                        continue;
+                    }
+
+                    // If using numeric aliases ensure the alias is a valid subversion
+                    if (($sourcePrefix = $this->versionParser->parseNumericAliasPrefix($sourceBranch))
+                        && ($targetPrefix = $this->versionParser->parseNumericAliasPrefix($targetBranch))
+                        && (stripos($targetPrefix, $sourcePrefix) !== 0)
+                    ) {
+                        $this->warnings[] = 'extra.branch-alias.'.$sourceBranch.' : the target branch ('.$targetBranch.') is not a valid numeric alias for this version';
                         unset($this->config['extra']['branch-alias'][$sourceBranch]);
                     }
                 }

@@ -13,6 +13,7 @@
 namespace Composer\Test\Repository\Vcs;
 
 use Composer\Repository\Vcs\PerforceDriver;
+use Composer\TestCase;
 use Composer\Util\Filesystem;
 use Composer\Config;
 use Composer\Util\Perforce;
@@ -20,7 +21,7 @@ use Composer\Util\Perforce;
 /**
  * @author Matt Whittom <Matt.Whittom@veteransunited.com>
  */
-class PerforceDriverTest extends \PHPUnit_Framework_TestCase
+class PerforceDriverTest extends TestCase
 {
     protected $config;
     protected $io;
@@ -29,20 +30,21 @@ class PerforceDriverTest extends \PHPUnit_Framework_TestCase
     protected $testPath;
     protected $driver;
     protected $repoConfig;
+    protected $perforce;
 
-    const TEST_URL    = 'TEST_PERFORCE_URL';
-    const TEST_DEPOT  = 'TEST_DEPOT_CONFIG';
+    const TEST_URL = 'TEST_PERFORCE_URL';
+    const TEST_DEPOT = 'TEST_DEPOT_CONFIG';
     const TEST_BRANCH = 'TEST_BRANCH_CONFIG';
 
     protected function setUp()
     {
-        $this->testPath         = sys_get_temp_dir() . '/composer-test';
-        $this->config           = $this->getTestConfig($this->testPath);
-        $this->repoConfig       = $this->getTestRepoConfig();
-        $this->io               = $this->getMockIOInterface();
-        $this->process          = $this->getMockProcessExecutor();
+        $this->testPath = $this->getUniqueTmpDirectory();
+        $this->config = $this->getTestConfig($this->testPath);
+        $this->repoConfig = $this->getTestRepoConfig();
+        $this->io = $this->getMockIOInterface();
+        $this->process = $this->getMockProcessExecutor();
         $this->remoteFileSystem = $this->getMockRemoteFilesystem();
-        $this->perforce         = $this->getMockPerforce();
+        $this->perforce = $this->getMockPerforce();
         $this->driver = new PerforceDriver($this->repoConfig, $this->io, $this->config, $this->process, $this->remoteFileSystem);
         $this->overrideDriverInternalPerforce($this->perforce);
     }
@@ -52,14 +54,14 @@ class PerforceDriverTest extends \PHPUnit_Framework_TestCase
         //cleanup directory under test path
         $fs = new Filesystem;
         $fs->removeDirectory($this->testPath);
-        $this->driver           = null;
-        $this->perforce         = null;
+        $this->driver = null;
+        $this->perforce = null;
         $this->remoteFileSystem = null;
-        $this->process          = null;
-        $this->io               = null;
-        $this->repoConfig       = null;
-        $this->config           = null;
-        $this->testPath         = null;
+        $this->process = null;
+        $this->io = null;
+        $this->repoConfig = null;
+        $this->config = null;
+        $this->testPath = null;
     }
 
     protected function overrideDriverInternalPerforce(Perforce $perforce)
@@ -81,20 +83,20 @@ class PerforceDriverTest extends \PHPUnit_Framework_TestCase
     protected function getTestRepoConfig()
     {
         return array(
-            'url'    => self::TEST_URL,
-            'depot'  => self::TEST_DEPOT,
+            'url' => self::TEST_URL,
+            'depot' => self::TEST_DEPOT,
             'branch' => self::TEST_BRANCH,
         );
     }
 
     protected function getMockIOInterface()
     {
-        return $this->getMock('Composer\IO\IOInterface');
+        return $this->getMockBuilder('Composer\IO\IOInterface')->getMock();
     }
 
     protected function getMockProcessExecutor()
     {
-        return $this->getMock('Composer\Util\ProcessExecutor');
+        return $this->getMockBuilder('Composer\Util\ProcessExecutor')->getMock();
     }
 
     protected function getMockRemoteFilesystem()
@@ -120,8 +122,8 @@ class PerforceDriverTest extends \PHPUnit_Framework_TestCase
 
     public function testInitializeLogsInAndConnectsClient()
     {
-        $this->perforce->expects($this->at(0))->method('p4Login')->with($this->identicalTo($this->io));
-        $this->perforce->expects($this->at(1))->method('checkStream')->with($this->equalTo(self::TEST_DEPOT));
+        $this->perforce->expects($this->at(0))->method('p4Login');
+        $this->perforce->expects($this->at(1))->method('checkStream');
         $this->perforce->expects($this->at(2))->method('writeP4ClientSpec');
         $this->perforce->expects($this->at(3))->method('connectClient');
         $this->driver->initialize();

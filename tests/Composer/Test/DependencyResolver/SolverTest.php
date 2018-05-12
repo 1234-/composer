@@ -9,8 +9,10 @@
  * For the full copyright and license information, please view the LICENSE
  * file that was distributed with this source code.
  */
+
 namespace Composer\Test\DependencyResolver;
 
+use Composer\IO\NullIO;
 use Composer\Repository\ArrayRepository;
 use Composer\DependencyResolver\DefaultPolicy;
 use Composer\DependencyResolver\Pool;
@@ -19,7 +21,7 @@ use Composer\DependencyResolver\Solver;
 use Composer\DependencyResolver\SolverProblemsException;
 use Composer\Package\Link;
 use Composer\TestCase;
-use Composer\Package\LinkConstraint\MultiConstraint;
+use Composer\Semver\Constraint\MultiConstraint;
 
 class SolverTest extends TestCase
 {
@@ -37,7 +39,7 @@ class SolverTest extends TestCase
 
         $this->request = new Request($this->pool);
         $this->policy = new DefaultPolicy;
-        $this->solver = new Solver($this->policy, $this->pool, $this->repoInstalled);
+        $this->solver = new Solver($this->policy, $this->pool, $this->repoInstalled, new NullIO());
     }
 
     public function testSolverInstallSingle()
@@ -74,7 +76,7 @@ class SolverTest extends TestCase
             $this->fail('Unsolvable conflict did not result in exception.');
         } catch (SolverProblemsException $e) {
             $problems = $e->getProblems();
-            $this->assertEquals(1, count($problems));
+            $this->assertCount(1, $problems);
             $this->assertEquals(2, $e->getCode());
             $this->assertEquals("\n    - The requested package b could not be found in any version, there may be a typo in the package name.", $problems[0]->getPrettyString());
         }
@@ -503,7 +505,7 @@ class SolverTest extends TestCase
         $this->repo->addPackage($packageX = $this->getPackage('X', '1.0'));
         $packageX->setRequires(array(
             'a' => new Link('X', 'A', $this->getVersionConstraint('>=', '2.0.0.0'), 'requires'),
-            'b' => new Link('X', 'B', $this->getVersionConstraint('>=', '2.0.0.0'), 'requires')
+            'b' => new Link('X', 'B', $this->getVersionConstraint('>=', '2.0.0.0'), 'requires'),
         ));
 
         $this->repo->addPackage($packageA = $this->getPackage('A', '2.0.0'));
@@ -522,7 +524,7 @@ class SolverTest extends TestCase
         $this->repo->addPackage($packageS = $this->getPackage('S', '2.0.0'));
         $packageS->setReplaces(array(
             'a' => new Link('S', 'A', $this->getVersionConstraint('>=', '2.0.0.0'), 'replaces'),
-            'b' => new Link('S', 'B', $this->getVersionConstraint('>=', '2.0.0.0'), 'replaces')
+            'b' => new Link('S', 'B', $this->getVersionConstraint('>=', '2.0.0.0'), 'replaces'),
         ));
 
         $this->reposComplete();
@@ -669,7 +671,7 @@ class SolverTest extends TestCase
             $this->fail('Unsolvable conflict did not result in exception.');
         } catch (SolverProblemsException $e) {
             $problems = $e->getProblems();
-            $this->assertEquals(1, count($problems));
+            $this->assertCount(1, $problems);
 
             $msg = "\n";
             $msg .= "  Problem 1\n";
@@ -698,7 +700,7 @@ class SolverTest extends TestCase
             $this->fail('Unsolvable conflict did not result in exception.');
         } catch (SolverProblemsException $e) {
             $problems = $e->getProblems();
-            $this->assertEquals(1, count($problems));
+            $this->assertCount(1, $problems);
             // TODO assert problem properties
 
             $msg = "\n";
@@ -708,8 +710,9 @@ class SolverTest extends TestCase
             $msg .= "Potential causes:\n";
             $msg .= " - A typo in the package name\n";
             $msg .= " - The package is not available in a stable-enough version according to your minimum-stability setting\n";
-            $msg .= "   see <https://groups.google.com/d/topic/composer-dev/_g3ASeIFlrc/discussion> for more details.\n\n";
-            $msg .= "Read <http://getcomposer.org/doc/articles/troubleshooting.md> for further common problems.";
+            $msg .= "   see <https://getcomposer.org/doc/04-schema.md#minimum-stability> for more details.\n";
+            $msg .= " - It's a private package and you forgot to add a custom repository to find it\n\n";
+            $msg .= "Read <https://getcomposer.org/doc/articles/troubleshooting.md> for further common problems.";
             $this->assertEquals($msg, $e->getMessage());
         }
     }
@@ -744,7 +747,7 @@ class SolverTest extends TestCase
             $this->fail('Unsolvable conflict did not result in exception.');
         } catch (SolverProblemsException $e) {
             $problems = $e->getProblems();
-            $this->assertEquals(1, count($problems));
+            $this->assertCount(1, $problems);
 
             $msg = "\n";
             $msg .= "  Problem 1\n";
@@ -848,15 +851,15 @@ class SolverTest extends TestCase
         foreach ($transaction as $operation) {
             if ('update' === $operation->getJobType()) {
                 $result[] = array(
-                    'job'  => 'update',
+                    'job' => 'update',
                     'from' => $operation->getInitialPackage(),
-                    'to'   => $operation->getTargetPackage()
+                    'to' => $operation->getTargetPackage(),
                 );
             } else {
                 $job = ('uninstall' === $operation->getJobType() ? 'remove' : 'install');
                 $result[] = array(
-                    'job'     => $job,
-                    'package' => $operation->getPackage()
+                    'job' => $job,
+                    'package' => $operation->getPackage(),
                 );
             }
         }

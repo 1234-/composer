@@ -13,8 +13,9 @@
 namespace Composer\Test\Package\Archiver;
 
 use Composer\Package\Archiver\GitExcludeFilter;
+use PHPUnit\Framework\TestCase;
 
-class GitExcludeFilterTest extends \PHPUnit_Framework_TestCase
+class GitExcludeFilterTest extends TestCase
 {
     /**
      * @dataProvider patterns
@@ -29,8 +30,8 @@ class GitExcludeFilterTest extends \PHPUnit_Framework_TestCase
     public function patterns()
     {
         return array(
-            array('app/config/parameters.yml', array('#(?=[^\.])app/(?=[^\.])config/(?=[^\.])parameters\.yml(?=$|/)#', false, false)),
-            array('!app/config/parameters.yml', array('#(?=[^\.])app/(?=[^\.])config/(?=[^\.])parameters\.yml(?=$|/)#', true, false)),
+            array('app/config/parameters.yml', array('{(?=[^\.])app/(?=[^\.])config/(?=[^\.])parameters\.yml(?=$|/)}', false, false)),
+            array('!app/config/parameters.yml', array('{(?=[^\.])app/(?=[^\.])config/(?=[^\.])parameters\.yml(?=$|/)}', true, false)),
         );
     }
 }

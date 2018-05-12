@@ -12,11 +12,17 @@
 
 namespace Composer\DependencyResolver;
 
+use Composer\Package\CompletePackage;
+use Composer\Package\Link;
+use Composer\Package\PackageInterface;
+
 /**
  * @author Nils Adermann <naderman@naderman.de>
+ * @author Ruben Gonzalez <rubenrua@gmail.com>
  */
-class Rule
+abstract class Rule
 {
+    // reason constants
     const RULE_INTERNAL_ALLOW_UPDATE = 1;
     const RULE_JOB_INSTALL = 2;
     const RULE_JOB_REMOVE = 3;
@@ -29,62 +35,47 @@ class Rule
     const RULE_LEARNED = 12;
     const RULE_PACKAGE_ALIAS = 13;
 
-    protected $pool;
+    // bitfield defs
+    const BITFIELD_TYPE = 0;
+    const BITFIELD_REASON = 8;
+    const BITFIELD_DISABLED = 16;
 
-    protected $disabled;
-    protected $literals;
-    protected $type;
-    protected $id;
-    protected $reason;
+    protected $bitfield;
+    protected $job;
     protected $reasonData;
 
-    protected $job;
-
-    protected $ruleHash;
-
-    public function __construct(Pool $pool, array $literals, $reason, $reasonData, $job = null)
+    /**
+     * @param int                   $reason     A RULE_* constant describing the reason for generating this rule
+     * @param Link|PackageInterface $reasonData
+     * @param array                 $job        The job this rule was created from
+     */
+    public function __construct($reason, $reasonData, $job = null)
     {
-        $this->pool = $pool;
-
-        // sort all packages ascending by id
-        sort($literals);
-
-        $this->literals = $literals;
-        $this->reason = $reason;
         $this->reasonData = $reasonData;
 
-        $this->disabled = false;
+        if ($job) {
+            $this->job = $job;
+        }
 
-        $this->job = $job;
-
-        $this->type = -1;
-
-        $this->ruleHash = substr(md5(implode(',', $this->literals)), 0, 5);
+        $this->bitfield = (0 << self::BITFIELD_DISABLED) |
+            ($reason << self::BITFIELD_REASON) |
+            (255 << self::BITFIELD_TYPE);
     }
 
-    public function getHash()
-    {
-        return $this->ruleHash;
-    }
+    abstract public function getLiterals();
 
-    public function setId($id)
-    {
-        $this->id = $id;
-    }
-
-    public function getId()
-    {
-        return $this->id;
-    }
+    abstract public function getHash();
 
     public function getJob()
     {
-        return $this->job;
+        return isset($this->job) ? $this->job : null;
     }
+
+    abstract public function equals(Rule $rule);
 
     public function getReason()
     {
-        return $this->reason;
+        return ($this->bitfield & (255 << self::BITFIELD_REASON)) >> self::BITFIELD_REASON;
     }
 
     public function getReasonData()
@@ -94,93 +85,60 @@ class Rule
 
     public function getRequiredPackage()
     {
-        if ($this->reason === self::RULE_JOB_INSTALL) {
+        if ($this->getReason() === self::RULE_JOB_INSTALL) {
             return $this->reasonData;
         }
 
-        if ($this->reason === self::RULE_PACKAGE_REQUIRES) {
+        if ($this->getReason() === self::RULE_PACKAGE_REQUIRES) {
             return $this->reasonData->getTarget();
         }
     }
 
-    /**
-     * Checks if this rule is equal to another one
-     *
-     * Ignores whether either of the rules is disabled.
-     *
-     * @param  Rule $rule The rule to check against
-     * @return bool Whether the rules are equal
-     */
-    public function equals(Rule $rule)
-    {
-        if ($this->ruleHash !== $rule->ruleHash) {
-            return false;
-        }
-
-        if (count($this->literals) != count($rule->literals)) {
-            return false;
-        }
-
-        for ($i = 0, $n = count($this->literals); $i < $n; $i++) {
-            if ($this->literals[$i] !== $rule->literals[$i]) {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
     public function setType($type)
     {
-        $this->type = $type;
+        $this->bitfield = ($this->bitfield & ~(255 << self::BITFIELD_TYPE)) | ((255 & $type) << self::BITFIELD_TYPE);
     }
 
     public function getType()
     {
-        return $this->type;
+        return ($this->bitfield & (255 << self::BITFIELD_TYPE)) >> self::BITFIELD_TYPE;
     }
 
     public function disable()
     {
-        $this->disabled = true;
+        $this->bitfield = ($this->bitfield & ~(255 << self::BITFIELD_DISABLED)) | (1 << self::BITFIELD_DISABLED);
     }
 
     public function enable()
     {
-        $this->disabled = false;
+        $this->bitfield = $this->bitfield & ~(255 << self::BITFIELD_DISABLED);
     }
 
     public function isDisabled()
     {
-        return $this->disabled;
+        return (bool) (($this->bitfield & (255 << self::BITFIELD_DISABLED)) >> self::BITFIELD_DISABLED);
     }
 
     public function isEnabled()
     {
-        return !$this->disabled;
+        return !(($this->bitfield & (255 << self::BITFIELD_DISABLED)) >> self::BITFIELD_DISABLED);
     }
 
-    public function getLiterals()
-    {
-        return $this->literals;
-    }
+    abstract public function isAssertion();
 
-    public function isAssertion()
+    public function getPrettyString(Pool $pool, array $installedMap = array())
     {
-        return 1 === count($this->literals);
-    }
+        $literals = $this->getLiterals();
 
-    public function getPrettyString(array $installedMap = array())
-    {
         $ruleText = '';
-        foreach ($this->literals as $i => $literal) {
+        foreach ($literals as $i => $literal) {
             if ($i != 0) {
                 $ruleText .= '|';
             }
-            $ruleText .= $this->pool->literalToPrettyString($literal, $installedMap);
+            $ruleText .= $pool->literalToPrettyString($literal, $installedMap);
         }
 
-        switch ($this->reason) {
+        switch ($this->getReason()) {
             case self::RULE_INTERNAL_ALLOW_UPDATE:
                 return $ruleText;
 
@@ -191,41 +149,74 @@ class Rule
                 return "Remove command rule ($ruleText)";
 
             case self::RULE_PACKAGE_CONFLICT:
-                $package1 = $this->pool->literalToPackage($this->literals[0]);
-                $package2 = $this->pool->literalToPackage($this->literals[1]);
+                $package1 = $pool->literalToPackage($literals[0]);
+                $package2 = $pool->literalToPackage($literals[1]);
 
-                return $package1->getPrettyString().' conflicts with '.$this->formatPackagesUnique(array($package2)).'.';
+                return $package1->getPrettyString().' conflicts with '.$this->formatPackagesUnique($pool, array($package2)).'.';
 
             case self::RULE_PACKAGE_REQUIRES:
-                $literals = $this->literals;
                 $sourceLiteral = array_shift($literals);
-                $sourcePackage = $this->pool->literalToPackage($sourceLiteral);
+                $sourcePackage = $pool->literalToPackage($sourceLiteral);
 
                 $requires = array();
                 foreach ($literals as $literal) {
-                    $requires[] = $this->pool->literalToPackage($literal);
+                    $requires[] = $pool->literalToPackage($literal);
                 }
 
                 $text = $this->reasonData->getPrettyString($sourcePackage);
                 if ($requires) {
-                    $text .= ' -> satisfiable by ' . $this->formatPackagesUnique($requires) . '.';
+                    $text .= ' -> satisfiable by ' . $this->formatPackagesUnique($pool, $requires) . '.';
                 } else {
                     $targetName = $this->reasonData->getTarget();
 
-                    // handle php extensions
+                    if ($targetName === 'php' || $targetName === 'php-64bit' || $targetName === 'hhvm') {
+                        // handle php/hhvm
+                        if (defined('HHVM_VERSION')) {
+                            return $text . ' -> your HHVM version does not satisfy that requirement.';
+                        }
+
+                        if ($targetName === 'hhvm') {
+                            return $text . ' -> you are running this with PHP and not HHVM.';
+                        }
+
+                        $packages = $pool->whatProvides($targetName);
+                        $package = count($packages) ? current($packages) : phpversion();
+
+                        if (!($package instanceof CompletePackage)) {
+                            return $text . ' -> your PHP version ('.phpversion().') does not satisfy that requirement.';
+                        }
+
+                        $extra = $package->getExtra();
+
+                        if (!empty($extra['config.platform'])) {
+                            $text .= ' -> your PHP version ('.phpversion().') overridden by "config.platform.php" version ('.$package->getPrettyVersion().') does not satisfy that requirement.';
+                        } else {
+                            $text .= ' -> your PHP version ('.$package->getPrettyVersion().') does not satisfy that requirement.';
+                        }
+
+                        return $text;
+                    }
+
                     if (0 === strpos($targetName, 'ext-')) {
+                        // handle php extensions
                         $ext = substr($targetName, 4);
                         $error = extension_loaded($ext) ? 'has the wrong version ('.(phpversion($ext) ?: '0').') installed' : 'is missing from your system';
 
-                        $text .= ' -> the requested PHP extension '.$ext.' '.$error.'.';
-                    } elseif (0 === strpos($targetName, 'lib-')) {
+                        return $text . ' -> the requested PHP extension '.$ext.' '.$error.'.';
+                    }
+
+                    if (0 === strpos($targetName, 'lib-')) {
                         // handle linked libs
                         $lib = substr($targetName, 4);
 
-                        $text .= ' -> the requested linked library '.$lib.' has the wrong version installed or is missing from your system, make sure to have the extension providing it.';
-                    } else {
-                        $text .= ' -> no matching package found.';
+                        return $text . ' -> the requested linked library '.$lib.' has the wrong version installed or is missing from your system, make sure to have the extension providing it.';
                     }
+
+                    if ($providers = $pool->whatProvides($targetName, $this->reasonData->getConstraint(), true, true)) {
+                        return $text . ' -> satisfiable by ' . $this->formatPackagesUnique($pool, $providers) .' but these conflict with your requirements or minimum-stability.';
+                    }
+
+                    return $text . ' -> no matching package found.';
                 }
 
                 return $text;
@@ -235,22 +226,30 @@ class Rule
             case self::RULE_INSTALLED_PACKAGE_OBSOLETES:
                 return $ruleText;
             case self::RULE_PACKAGE_SAME_NAME:
-                return 'Can only install one of: ' . $this->formatPackagesUnique($this->literals) . '.';
+                return 'Can only install one of: ' . $this->formatPackagesUnique($pool, $literals) . '.';
             case self::RULE_PACKAGE_IMPLICIT_OBSOLETES:
                 return $ruleText;
             case self::RULE_LEARNED:
                 return 'Conclusion: '.$ruleText;
             case self::RULE_PACKAGE_ALIAS:
                 return $ruleText;
+            default:
+                return '('.$ruleText.')';
         }
     }
 
-    protected function formatPackagesUnique(array $packages)
+    /**
+     * @param Pool  $pool
+     * @param array $packages
+     *
+     * @return string
+     */
+    protected function formatPackagesUnique($pool, array $packages)
     {
         $prepared = array();
         foreach ($packages as $package) {
             if (!is_object($package)) {
-                $package = $this->pool->literalToPackage($package);
+                $package = $pool->literalToPackage($package);
             }
             $prepared[$package->getName()]['name'] = $package->getPrettyName();
             $prepared[$package->getName()]['versions'][$package->getVersion()] = $package->getPrettyVersion();
@@ -260,26 +259,5 @@ class Rule
         }
 
         return implode(', ', $prepared);
-    }
-
-    /**
-     * Formats a rule as a string of the format (Literal1|Literal2|...)
-     *
-     * @return string
-     */
-    public function __toString()
-    {
-        $result = ($this->isDisabled()) ? 'disabled(' : '(';
-
-        foreach ($this->literals as $i => $literal) {
-            if ($i != 0) {
-                $result .= '|';
-            }
-            $result .= $this->pool->literalToString($literal);
-        }
-
-        $result .= ')';
-
-        return $result;
     }
 }

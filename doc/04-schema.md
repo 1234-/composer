@@ -6,8 +6,7 @@ This chapter will explain all of the fields available in `composer.json`.
 
 We have a [JSON schema](http://json-schema.org) that documents the format and
 can also be used to validate your `composer.json`. In fact, it is used by the
-`validate` command. You can find it at:
-[`res/composer-schema.json`](https://github.com/composer/composer/blob/master/res/composer-schema.json).
+`validate` command. You can find it at: https://getcomposer.org/schema.json
 
 ## Root Package
 
@@ -20,9 +19,6 @@ this is the `config` field. Only the root package can define configuration.
 The config of dependencies is ignored. This makes the `config` field
 `root-only`.
 
-If you clone one of those dependencies to work on it, then that package is the
-root package. The `composer.json` is identical, but the context is different.
-
 > **Note:** A package can be the root package or not, depending on the context.
 > For example, if your project depends on the `monolog` library, your project
 > is the root package. However, if you clone `monolog` from GitHub in order to
@@ -33,18 +29,21 @@ root package. The `composer.json` is identical, but the context is different.
 ### name
 
 The name of the package. It consists of vendor name and project name,
-separated by `/`.
-
-Examples:
+separated by `/`. Examples:
 
 * monolog/monolog
 * igorw/event-source
+
+The name can contain any character, including white spaces, and it's case
+insensitive (`foo/bar` and `Foo/Bar` are considered the same package). In order
+to simplify its installation, it's recommended to define a short and lowercase
+name that doesn't include non-alphanumeric characters or white spaces.
 
 Required for published packages (libraries).
 
 ### description
 
-A short description of the package. Usually this is just one line long.
+A short description of the package. Usually this is one line long.
 
 Required for published packages (libraries).
 
@@ -54,8 +53,8 @@ The version of the package. In most cases this is not required and should
 be omitted (see below).
 
 This must follow the format of `X.Y.Z` or `vX.Y.Z` with an optional suffix
-of `-dev`, `-patch`, `-alpha`, `-beta` or `-RC`. The patch, alpha, beta and
-RC suffixes can also be followed by a number.
+of `-dev`, `-patch` (`-p`), `-alpha` (`-a`), `-beta` (`-b`) or `-RC`.
+The patch, alpha, beta and RC suffixes can also be followed by a number.
 
 Examples:
 
@@ -67,6 +66,7 @@ Examples:
 - 1.0.0-alpha3
 - 1.0.0-beta2
 - 1.0.0-RC5
+- v2.0.4-p1
 
 Optional if the package repository can infer the version from somewhere, such
 as the VCS tag name in the VCS repository. In that case it is also recommended
@@ -82,11 +82,11 @@ The type of the package. It defaults to `library`.
 
 Package types are used for custom installation logic. If you have a package
 that needs some special logic, you can define a custom type. This could be a
-`symfony-bundle`, a `wordpress-plugin` or a `typo3-module`. These types will
-all be specific to certain projects, and they will need to provide an
+`symfony-bundle`, a `wordpress-plugin` or a `typo3-cms-extension`. These types
+will all be specific to certain projects, and they will need to provide an
 installer capable of installing packages of that type.
 
-Out of the box, composer supports four types:
+Out of the box, Composer supports four types:
 
 - **library:** This is the default. It will simply copy the files to `vendor`.
 - **project:** This denotes a project rather than a library. For example
@@ -104,7 +104,7 @@ Out of the box, composer supports four types:
   [dedicated article](articles/custom-installers.md).
 
 Only use a custom type if you need custom logic during installation. It is
-recommended to omit this field and have it just default to `library`.
+recommended to omit this field and have it default to `library`.
 
 ### keywords
 
@@ -127,6 +127,12 @@ An URL to the website of the project.
 
 Optional.
 
+### readme
+
+A relative path to the readme document.
+
+Optional.
+
 ### time
 
 Release date of the version.
@@ -145,18 +151,14 @@ The recommended notation for the most common licenses is (alphabetical):
 - BSD-2-Clause
 - BSD-3-Clause
 - BSD-4-Clause
-- GPL-2.0
-- GPL-2.0+
-- GPL-3.0
-- GPL-3.0+
-- LGPL-2.1
-- LGPL-2.1+
-- LGPL-3.0
-- LGPL-3.0+
+- GPL-2.0-only / GPL-2.0-or-later
+- GPL-3.0-only / GPL-3.0-or-later
+- LGPL-2.1-only / LGPL-2.1-or-later
+- LGPL-3.0-only / LGPL-3.0-or-later
 - MIT
 
 Optional, but it is highly recommended to supply this. More identifiers are
-listed at the [SPDX Open Source License Registry](http://www.spdx.org/licenses/).
+listed at the [SPDX Open Source License Registry](https://spdx.org/licenses/).
 
 For closed-source software, you may use `"proprietary"` as the license identifier.
 
@@ -176,8 +178,8 @@ An Example for disjunctive licenses:
 ```json
 {
     "license": [
-       "LGPL-2.1",
-       "GPL-3.0+"
+       "LGPL-2.1-only",
+       "GPL-3.0-or-later"
     ]
 }
 ```
@@ -186,7 +188,7 @@ Alternatively they can be separated with "or" and enclosed in parenthesis;
 
 ```json
 {
-    "license": "(LGPL-2.1 or GPL-3.0+)"
+    "license": "(LGPL-2.1-only or GPL-3.0-or-later)"
 }
 ```
 
@@ -199,10 +201,10 @@ The authors of the package. This is an array of objects.
 
 Each author object can have following properties:
 
-* **name:** The author's name. Usually his real name.
+* **name:** The author's name. Usually their real name.
 * **email:** The author's email address.
 * **homepage:** An URL to the author's website.
-* **role:** The authors' role in the project (e.g. developer or translator)
+* **role:** The author's role in the project (e.g. developer or translator)
 
 An example:
 
@@ -218,7 +220,7 @@ An example:
         {
             "name": "Jordi Boggiano",
             "email": "j.boggiano@seld.be",
-            "homepage": "http://seld.be",
+            "homepage": "https://seld.be",
             "role": "Developer"
         }
     ]
@@ -234,11 +236,13 @@ Various information to get support about the project.
 Support information includes the following:
 
 * **email:** Email address for support.
-* **issues:** URL to the Issue Tracker.
-* **forum:** URL to the Forum.
-* **wiki:** URL to the Wiki.
+* **issues:** URL to the issue tracker.
+* **forum:** URL to the forum.
+* **wiki:** URL to the wiki.
 * **irc:** IRC channel for support, as irc://server/channel.
 * **source:** URL to browse or download the sources.
+* **docs:** URL to the documentation.
+* **rss:** URL to the RSS feed.
 
 An example:
 
@@ -256,7 +260,8 @@ Optional.
 ### Package links
 
 All of the following take an object which maps package names to
-[version constraints](01-basic-usage.md#package-versions).
+versions of the package via version constraints. Read more about
+versions [here](articles/versions.md).
 
 Example:
 
@@ -270,10 +275,10 @@ Example:
 
 All links are optional fields.
 
-`require` and `require-dev` additionally support stability flags (root-only).
+`require` and `require-dev` additionally support stability flags ([root-only](04-schema.md#root-package)).
 These allow you to further restrict or expand the stability of a package beyond
 the scope of the [minimum-stability](#minimum-stability) setting. You can apply
-them to a constraint, or just apply them to an empty constraint if you want to
+them to a constraint, or apply them to an empty constraint if you want to
 allow unstable packages of a dependency for example.
 
 Example:
@@ -292,6 +297,10 @@ explicitly require it as well, along with its sufficient stability flag.
 
 Example:
 
+Assuming `doctrine/doctrine-fixtures-bundle` requires `"doctrine/data-fixtures": "dev-master"`
+then inside the root composer.json you need to add the second line below to allow dev
+releases for the `doctrine/data-fixtures` package :
+
 ```json
 {
     "require": {
@@ -304,7 +313,9 @@ Example:
 `require` and `require-dev` additionally support explicit references (i.e.
 commit) for dev versions to make sure they are locked to a given state, even
 when you run update. These only work if you explicitly require a dev version
-and append the reference with `#<ref>`.
+and append the reference with `#<ref>`. This is also a
+[root-only](04-schema.md#root-package) feature and will be ignored in
+dependencies.
 
 Example:
 
@@ -317,23 +328,48 @@ Example:
 }
 ```
 
-> **Note:** While this is convenient at times, it should not be how you use
-> packages in the long term because it comes with a technical limitation. The
+> **Note:** This feature has severe technical limitations, as the
 > composer.json metadata will still be read from the branch name you specify
-> before the hash. Because of that in some cases it will not be a practical
-> workaround, and you should always try to switch to tagged releases as soon
-> as you can.
+> before the hash. You should therefore only use this as a temporary solution
+> during development to remediate transient issues, until you can switch to
+> tagged releases. The Composer team does not actively support this feature
+> and will not accept bug reports related to it.
 
 It is also possible to inline-alias a package constraint so that it matches
 a constraint that it otherwise would not. For more information [see the
 aliases article](articles/aliases.md).
+
+`require` and `require-dev` also support references to specific PHP versions
+and PHP extensions your project needs to run successfully.
+
+Example:
+
+```json
+{
+    "require" : {
+        "php" : "^5.5 || ^7.0",
+        "ext-mbstring": "*"
+    }
+}
+```
+
+> **Note:** It is important to list PHP extensions your project requires.
+> Not all PHP installations are created equal: some may miss extensions you
+> may consider as standard (such as `ext-mysqli` which is not installed by
+> default in Fedora/CentOS minimal installation systems). Failure to list
+> required PHP extensions may lead to a bad user experience: Composer will
+> install your package without any errors but it will then fail at run-time.
+> The `composer show --platform` command lists all PHP extensions available on
+> your system. You may use it to help you compile the list of extensions you
+> use and require. Alternatively you may use third party tools to analyze
+> your project for the list of extensions used.
 
 #### require
 
 Lists packages required by this package. The package will not be installed
 unless those requirements can be met.
 
-#### require-dev <span>(root-only)</span>
+#### require-dev <span>([root-only](04-schema.md#root-package))</span>
 
 Lists packages required for developing this package, or running
 tests, etc. The dev requirements of the root package are installed by default.
@@ -345,10 +381,10 @@ dependencies from being installed.
 Lists packages that conflict with this version of this package. They
 will not be allowed to be installed together with your package.
 
-Note that when specifying ranges like `<1.0, >= 1.1` in a `conflict` link,
+Note that when specifying ranges like `<1.0 >=1.1` in a `conflict` link,
 this will state a conflict with all versions that are less than 1.0 *and* equal
 or newer than 1.1 at the same time, which is probably not what you want. You
-probably want to go for `<1.0 | >= 1.1` in this case.
+probably want to go for `<1.0 || >=1.1` in this case.
 
 #### replace
 
@@ -375,10 +411,10 @@ useful for common interfaces. A package could depend on some virtual
 `logger` package, any library that implements this logger interface would
 simply list it in `provide`.
 
-### suggest
+#### suggest
 
 Suggested packages that can enhance or work well with this package. These are
-just informational and are displayed after the package is installed, to give
+informational and are displayed after the package is installed, to give
 your users a hint that they could add more packages, even though they are not
 strictly required.
 
@@ -390,7 +426,8 @@ Example:
 ```json
 {
     "suggest": {
-        "monolog/monolog": "Allows more advanced logging of the application flow"
+        "monolog/monolog": "Allows more advanced logging of the application flow",
+        "ext-xml": "Needed to support XML format in class Foo"
     }
 }
 ```
@@ -399,10 +436,11 @@ Example:
 
 Autoload mapping for a PHP autoloader.
 
-Currently [`PSR-0`](http://www.php-fig.org/psr/psr-0/) autoloading,
-[`PSR-4`](http://www.php-fig.org/psr/psr-4/) autoloading, `classmap` generation and
-`files` includes are supported. PSR-4 is the recommended way though since it offers
-greater ease of use (no need to regenerate the autoloader when you add classes).
+[`PSR-4`](http://www.php-fig.org/psr/psr-4/) and [`PSR-0`](http://www.php-fig.org/psr/psr-0/)
+autoloading, `classmap` generation and `files` includes are supported.
+
+PSR-4 is the recommended way since it offers greater ease of use (no need
+to regenerate the autoloader when you add classes).
 
 #### PSR-4
 
@@ -540,7 +578,7 @@ Example:
 #### Files
 
 If you want to require certain files explicitly on every request then you can use
-the 'files' autoloading mechanism. This is useful if your package includes PHP functions
+the `files` autoloading mechanism. This is useful if your package includes PHP functions
 that cannot be autoloaded by PHP.
 
 Example:
@@ -553,7 +591,34 @@ Example:
 }
 ```
 
-### autoload-dev <span>(root-only)</span>
+#### Exclude files from classmaps
+
+If you want to exclude some files or folders from the classmap you can use the `exclude-from-classmap` property.
+This might be useful to exclude test classes in your live environment, for example, as those will be skipped
+from the classmap even when building an optimized autoloader.
+
+The classmap generator will ignore all files in the paths configured here. The paths are absolute from the package
+root directory (i.e. composer.json location), and support `*` to match anything but a slash, and `**` to
+match anything. `**` is implicitly added to the end of the paths.
+
+Example:
+
+```json
+{
+    "autoload": {
+        "exclude-from-classmap": ["/Tests/", "/test/", "/tests/"]
+    }
+}
+```
+
+#### Optimizing the autoloader
+
+The autoloader can have quite a substantial impact on your request time
+(50-100ms per request in large frameworks using a lot of classes). See the
+[article about optimizing the autoloader](articles/autoloader-optimization.md)
+for more details on how to reduce this impact.
+
+### autoload-dev <span>([root-only](04-schema.md#root-package))</span>
 
 This section allows to define autoload rules for development purposes.
 
@@ -626,7 +691,7 @@ To do that, `autoload` and `target-dir` are defined as follows:
 
 Optional.
 
-### minimum-stability <span>(root-only)</span>
+### minimum-stability <span>([root-only](04-schema.md#root-package))</span>
 
 This defines the default behavior for filtering packages by stability. This
 defaults to `stable`, so if you rely on a `dev` package, you should specify
@@ -634,14 +699,14 @@ it in your file to avoid surprises.
 
 All versions of each package are checked for stability, and those that are less
 stable than the `minimum-stability` setting will be ignored when resolving
-your project dependencies. Specific changes to the stability requirements of
-a given package can be done in `require` or `require-dev` (see
-[package links](#package-links)).
+your project dependencies. (Note that you can also specify stability requirements
+on a per-package basis using stability flags in the version constraints that you
+specify in a `require` block (see [package links](#package-links) for more details).
 
 Available options (in order of stability) are `dev`, `alpha`, `beta`, `RC`,
 and `stable`.
 
-### prefer-stable <span>(root-only)</span>
+### prefer-stable <span>([root-only](04-schema.md#root-package))</span>
 
 When this is enabled, Composer will prefer more stable packages over unstable
 ones when finding compatible stable packages is possible. If you require a
@@ -650,11 +715,11 @@ selected granted that the minimum-stability allows for it.
 
 Use `"prefer-stable": true` to enable.
 
-### repositories <span>(root-only)</span>
+### repositories <span>([root-only](04-schema.md#root-package))</span>
 
 Custom package repositories to use.
 
-By default composer just uses the packagist repository. By specifying
+By default Composer only uses the packagist repository. By specifying
 repositories you can get packages from elsewhere.
 
 Repositories are not resolved recursively. You can only add them to your main
@@ -663,18 +728,18 @@ ignored.
 
 The following repository types are supported:
 
-* **composer:** A composer repository is simply a `packages.json` file served
+* **composer:** A Composer repository is simply a `packages.json` file served
   via the network (HTTP, FTP, SSH), that contains a list of `composer.json`
   objects with additional `dist` and/or `source` information. The `packages.json`
   file is loaded using a PHP stream. You can set extra options on that stream
   using the `options` parameter.
 * **vcs:** The version control system repository can fetch packages from git,
-  svn and hg repositories.
-* **pear:** With this you can import any pear repository into your composer
+  svn, fossil and hg repositories.
+* **pear:** With this you can import any pear repository into your Composer
   project.
 * **package:** If you depend on a project that does not have any support for
   composer whatsoever you can define the package inline using a `package`
-  repository. You basically just inline the `composer.json` object.
+  repository. You basically inline the `composer.json` object.
 
 For more information on any of these, see [Repositories](05-repositories.md).
 
@@ -702,7 +767,7 @@ Example:
         },
         {
             "type": "pear",
-            "url": "http://pear2.php.net"
+            "url": "https://pear2.php.net"
         },
         {
             "type": "package",
@@ -710,11 +775,11 @@ Example:
                 "name": "smarty/smarty",
                 "version": "3.1.7",
                 "dist": {
-                    "url": "http://www.smarty.net/files/Smarty-3.1.7.zip",
+                    "url": "https://www.smarty.net/files/Smarty-3.1.7.zip",
                     "type": "zip"
                 },
                 "source": {
-                    "url": "http://smarty-php.googlecode.com/svn/",
+                    "url": "https://smarty-php.googlecode.com/svn/",
                     "type": "svn",
                     "reference": "tags/Smarty_3_1_7/distribution/"
                 }
@@ -729,95 +794,26 @@ will look from the first to the last repository, and pick the first match.
 By default Packagist is added last which means that custom repositories can
 override packages from it.
 
-### config <span>(root-only)</span>
+Using JSON object notation is also possible. However, JSON key/value pairs
+are to be considered unordered so consistent behaviour cannot be guaranteed.
 
-A set of configuration options. It is only used for projects.
-
-The following options are supported:
-
-* **process-timeout:** Defaults to `300`. The duration processes like git clones
-  can run before Composer assumes they died out. You may need to make this
-  higher if you have a slow connection or huge vendors.
-* **use-include-path:** Defaults to `false`. If true, the Composer autoloader
-  will also look for classes in the PHP include path.
-* **preferred-install:** Defaults to `auto` and can be any of `source`, `dist` or
-  `auto`. This option allows you to set the install method Composer will prefer to
-  use.
-* **store-auths:** What to do after prompting for authentication, one of:
-  `true` (always store), `false` (do not store) and `"prompt"` (ask every
-  time), defaults to `"prompt"`.
-* **github-protocols:** Defaults to `["git", "https", "ssh"]`. A list of protocols to
-  use when cloning from github.com, in priority order. You can reconfigure it to
-  for example prioritize the https protocol if you are behind a proxy or have somehow
-  bad performances with the git protocol.
-* **github-oauth:** A list of domain names and oauth keys. For example using
-  `{"github.com": "oauthtoken"}` as the value of this option will use `oauthtoken`
-  to access private repositories on github and to circumvent the low IP-based
-  rate limiting of their API.
-  [Read more](articles/troubleshooting.md#api-rate-limit-and-oauth-tokens)
-  on how to get an OAuth token for GitHub.
-* **http-basic:** A list of domain names and username/passwords to authenticate
-  against them. For example using
-  `{"example.org": {"username": "alice", "password": "foo"}` as the value of this option will let composer authenticate against example.org.
-* **vendor-dir:** Defaults to `vendor`. You can install dependencies into a
-  different directory if you want to. `$HOME` and `~` will be replaced by your
-  home directory's path in vendor-dir and all `*-dir` options below.
-* **bin-dir:** Defaults to `vendor/bin`. If a project includes binaries, they
-  will be symlinked into this directory.
-* **cache-dir:** Defaults to `$home/cache` on unix systems and
-  `C:\Users\<user>\AppData\Local\Composer` on Windows. Stores all the caches
-  used by composer. See also [COMPOSER_HOME](03-cli.md#composer-home).
-* **cache-files-dir:** Defaults to `$cache-dir/files`. Stores the zip archives
-  of packages.
-* **cache-repo-dir:** Defaults to `$cache-dir/repo`. Stores repository metadata
-  for the `composer` type and the VCS repos of type `svn`, `github` and `bitbucket`.
-* **cache-vcs-dir:** Defaults to `$cache-dir/vcs`. Stores VCS clones for
-  loading VCS repository metadata for the `git`/`hg` types and to speed up installs.
-* **cache-files-ttl:** Defaults to `15552000` (6 months). Composer caches all
-  dist (zip, tar, ..) packages that it downloads. Those are purged after six
-  months of being unused by default. This option allows you to tweak this
-  duration (in seconds) or disable it completely by setting it to 0.
-* **cache-files-maxsize:** Defaults to `300MiB`. Composer caches all
-  dist (zip, tar, ..) packages that it downloads. When the garbage collection
-  is periodically ran, this is the maximum size the cache will be able to use.
-  Older (less used) files will be removed first until the cache fits.
-* **prepend-autoloader:** Defaults to `true`. If false, the composer autoloader
-  will not be prepended to existing autoloaders. This is sometimes required to fix
-  interoperability issues with other autoloaders.
-* **autoloader-suffix:** Defaults to `null`. String to be used as a suffix for
-  the generated Composer autoloader. When null a random one will be generated.
-* **optimize-autoloader** Defaults to `false`. Always optimize when dumping
-  the autoloader.
-* **github-domains:** Defaults to `["github.com"]`. A list of domains to use in
-  github mode. This is used for GitHub Enterprise setups.
-* **github-expose-hostname:** Defaults to `true`. If set to false, the OAuth
-  tokens created to access the github API will have a date instead of the
-  machine hostname.
-* **notify-on-install:** Defaults to `true`. Composer allows repositories to
-  define a notification URL, so that they get notified whenever a package from
-  that repository is installed. This option allows you to disable that behaviour.
-* **discard-changes:** Defaults to `false` and can be any of `true`, `false` or
-  `"stash"`. This option allows you to set the default style of handling dirty
-  updates when in non-interactive mode. `true` will always discard changes in
-  vendors, while `"stash"` will try to stash and reapply. Use this for CI
-  servers or deploy scripts if you tend to have modified vendors.
-
-Example:
-
-```json
+ ```json
 {
-    "config": {
-        "bin-dir": "bin"
+    "repositories": {
+         "foo": {
+             "type": "composer",
+             "url": "http://packages.foo.com"
+         }
     }
 }
-```
+ ```
 
-> **Note:** Authentication-related config options like `http-basic` and
-> `github-oauth` can also be specified inside a `auth.json` file that goes
-> besides your `composer.json`. That way you can gitignore it and every
-> developer can place their own credentials in there.
+### config <span>([root-only](04-schema.md#root-package))</span>
 
-### scripts <span>(root-only)</span>
+A set of configuration options. It is only used for projects. See
+[Config](06-config.md) for a description of each individual option.
+
+### scripts <span>([root-only](04-schema.md#root-package))</span>
 
 Composer allows you to hook into various parts of the installation process
 through the use of scripts.
@@ -870,6 +866,57 @@ Example:
 
 The example will include `/dir/foo/bar/file`, `/foo/bar/baz`, `/file.php`,
 `/foo/my.test` but it will exclude `/foo/bar/any`, `/foo/baz`, and `/my.test`.
+
+Optional.
+
+### abandoned
+
+Indicates whether this package has been abandoned.
+
+It can be boolean or a package name/URL pointing to a recommended alternative.
+
+Examples:
+
+Use `"abandoned": true` to indicates this package is abandoned.
+Use `"abandoned": "monolog/monolog"` to indicates this package is abandoned and the
+recommended alternative is  `monolog/monolog`.
+
+Defaults to false.
+
+Optional.
+
+### non-feature-branches
+
+A list of regex patterns of branch names that are non-numeric (e.g. "latest" or something),
+that will NOT be handled as feature branches. This is an array of strings.
+
+If you have non-numeric branch names, for example like "latest", "current", "latest-stable"
+or something, that do not look like a version number, then Composer handles such branches
+as feature branches. This means it searches for parent branches, that look like a version
+or ends at special branches (like master) and the root package version number becomes the
+version of the parent branch or at least master or something.
+
+To handle non-numeric named branches as versions instead of searching for a parent branch
+with a valid version or special branch name like master, you can set patterns for branch
+names, that should be handled as dev version branches.
+
+This is really helpful when you have dependencies using "self.version", so that not dev-master,
+but the same branch is installed (in the example: latest-testing).
+
+An example:
+
+If you have a testing branch, that is heavily maintained during a testing phase and is
+deployed to your staging environment, normally `composer show -s` will give you `versions : * dev-master`.
+
+If you configure `latest-.*` as a pattern for non-feature-branches like this:
+
+```json
+{
+    "non-feature-branches": ["latest-.*"]
+}
+```
+
+Then `composer show -s` will give you `versions : * dev-latest-testing`.
 
 Optional.
 

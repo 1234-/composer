@@ -18,12 +18,44 @@ use Composer\TestCase;
 class FilesystemTest extends TestCase
 {
     /**
+     * @var Filesystem
+     */
+    private $fs;
+
+    /**
+     * @var string
+     */
+    private $workingDir;
+
+    /**
+     * @var string
+     */
+    private $testFile;
+
+    public function setUp()
+    {
+        $this->fs = new Filesystem;
+        $this->workingDir = $this->getUniqueTmpDirectory();
+        $this->testFile = $this->getUniqueTmpDirectory() . '/composer_test_file';
+    }
+
+    public function tearDown()
+    {
+        if (is_dir($this->workingDir)) {
+            $this->fs->removeDirectory($this->workingDir);
+        }
+        if (is_file($this->testFile)) {
+            $this->fs->removeDirectory(dirname($this->testFile));
+        }
+    }
+
+    /**
      * @dataProvider providePathCouplesAsCode
      */
-    public function testFindShortestPathCode($a, $b, $directory, $expected)
+    public function testFindShortestPathCode($a, $b, $directory, $expected, $static = false)
     {
         $fs = new Filesystem;
-        $this->assertEquals($expected, $fs->findShortestPathCode($a, $b, $directory));
+        $this->assertEquals($expected, $fs->findShortestPathCode($a, $b, $directory, $static));
     }
 
     public function providePathCouplesAsCode()
@@ -62,6 +94,16 @@ class FilesystemTest extends TestCase
             array('/foo/bar_vendor', '/foo/bar', true, "dirname(__DIR__).'/bar'"),
             array('/foo/bar_vendor', '/foo/bar/src', true, "dirname(__DIR__).'/bar/src'"),
             array('/foo/bar_vendor/src2', '/foo/bar/src/lib', true, "dirname(dirname(__DIR__)).'/bar/src/lib'"),
+
+            // static use case
+            array('/tmp/test/../vendor', '/tmp/test', true, "__DIR__ . '/..'.'/test'", true),
+            array('/tmp/test/.././vendor', '/tmp/test', true, "__DIR__ . '/..'.'/test'", true),
+            array('C:/Temp', 'c:\Temp\..\..\test', true, "__DIR__ . '/..'.'/test'", true),
+            array('C:/Temp/../..', 'd:\Temp\..\..\test', true, "'d:/test'", true),
+            array('/foo/bar', '/foo/bar_vendor', true, "__DIR__ . '/..'.'/bar_vendor'", true),
+            array('/foo/bar_vendor', '/foo/bar', true, "__DIR__ . '/..'.'/bar'", true),
+            array('/foo/bar_vendor', '/foo/bar/src', true, "__DIR__ . '/..'.'/bar/src'", true),
+            array('/foo/bar_vendor/src2', '/foo/bar/src/lib', true, "__DIR__ . '/../..'.'/bar/src/lib'", true),
         );
     }
 
@@ -112,6 +154,7 @@ class FilesystemTest extends TestCase
             array('/foo/bar_vendor', '/foo/bar', '../bar', true),
             array('/foo/bar_vendor', '/foo/bar/src', '../bar/src', true),
             array('/foo/bar_vendor/src2', '/foo/bar/src/lib', '../../bar/src/lib', true),
+            array('C:/', 'C:/foo/bar/', "foo/bar", true),
         );
     }
 
@@ -120,33 +163,30 @@ class FilesystemTest extends TestCase
      */
     public function testRemoveDirectoryPhp()
     {
-        $tmp = sys_get_temp_dir();
-        @mkdir($tmp . "/composer_testdir/level1/level2", 0777, true);
-        file_put_contents($tmp . "/composer_testdir/level1/level2/hello.txt", "hello world");
+        @mkdir($this->workingDir . "/level1/level2", 0777, true);
+        file_put_contents($this->workingDir . "/level1/level2/hello.txt", "hello world");
 
         $fs = new Filesystem;
-        $this->assertTrue($fs->removeDirectoryPhp($tmp . "/composer_testdir"));
-        $this->assertFalse(file_exists($tmp . "/composer_testdir/level1/level2/hello.txt"));
+        $this->assertTrue($fs->removeDirectoryPhp($this->workingDir));
+        $this->assertFileNotExists($this->workingDir . "/level1/level2/hello.txt");
     }
 
     public function testFileSize()
     {
-        $tmp = sys_get_temp_dir();
-        file_put_contents("$tmp/composer_test_file", 'Hello');
+        file_put_contents($this->testFile, 'Hello');
 
         $fs = new Filesystem;
-        $this->assertGreaterThanOrEqual(5, $fs->size("$tmp/composer_test_file"));
+        $this->assertGreaterThanOrEqual(5, $fs->size($this->testFile));
     }
 
     public function testDirectorySize()
     {
-        $tmp = sys_get_temp_dir();
-        @mkdir("$tmp/composer_testdir", 0777, true);
-        file_put_contents("$tmp/composer_testdir/file1.txt", 'Hello');
-        file_put_contents("$tmp/composer_testdir/file2.txt", 'World');
+        @mkdir($this->workingDir, 0777, true);
+        file_put_contents($this->workingDir."/file1.txt", 'Hello');
+        file_put_contents($this->workingDir."/file2.txt", 'World');
 
         $fs = new Filesystem;
-        $this->assertGreaterThanOrEqual(10, $fs->size("$tmp/composer_testdir"));
+        $this->assertGreaterThanOrEqual(10, $fs->size($this->workingDir));
     }
 
     /**
@@ -164,12 +204,18 @@ class FilesystemTest extends TestCase
             array('../foo', '../foo'),
             array('c:/foo/bar', 'c:/foo//bar'),
             array('C:/foo/bar', 'C:/foo/./bar'),
+            array('C:/foo/bar', 'C://foo//bar'),
+            array('C:/foo/bar', 'C:///foo//bar'),
             array('C:/bar', 'C:/foo/../bar'),
             array('/bar', '/foo/../bar/'),
             array('phar://c:/Foo', 'phar://c:/Foo/Bar/..'),
+            array('phar://c:/Foo', 'phar://c:///Foo/Bar/..'),
             array('phar://c:/', 'phar://c:/Foo/Bar/../../../..'),
             array('/', '/Foo/Bar/../../../..'),
             array('/', '/'),
+            array('/', '//'),
+            array('/', '///'),
+            array('/Foo', '///Foo'),
             array('c:/', 'c:\\'),
             array('../src', 'Foo/Bar/../../../src'),
             array('c:../b', 'c:.\\..\\a\\..\\b'),
@@ -179,11 +225,11 @@ class FilesystemTest extends TestCase
 
     /**
      * @link https://github.com/composer/composer/issues/3157
+     * @requires function symlink
      */
     public function testUnlinkSymlinkedDirectory()
     {
-        $tmp       = sys_get_temp_dir();
-        $basepath  = $tmp . "/composer_testdir";
+        $basepath = $this->workingDir;
         $symlinked = $basepath . "/linked";
         @mkdir($basepath . "/real", 0777, true);
         touch($basepath . "/real/FILE");
@@ -198,25 +244,24 @@ class FilesystemTest extends TestCase
             $this->fail('Precondition assertion failed (is_dir is false on symbolic link to directory).');
         }
 
-        $fs     = new Filesystem();
+        $fs = new Filesystem();
         $result = $fs->unlink($symlinked);
         $this->assertTrue($result);
-        $this->assertFalse(file_exists($symlinked));
+        $this->assertFileNotExists($symlinked);
     }
 
     /**
      * @link https://github.com/composer/composer/issues/3144
+     * @requires function symlink
      */
     public function testRemoveSymlinkedDirectoryWithTrailingSlash()
     {
-        $tmp = sys_get_temp_dir();
-        $basepath = $tmp . "/composer_testdir";
-        @mkdir($basepath . "/real", 0777, true);
-        touch($basepath . "/real/FILE");
-        $symlinked              = $basepath . "/linked";
+        @mkdir($this->workingDir . "/real", 0777, true);
+        touch($this->workingDir . "/real/FILE");
+        $symlinked = $this->workingDir . "/linked";
         $symlinkedTrailingSlash = $symlinked . "/";
 
-        $result = @symlink($basepath . "/real", $symlinked);
+        $result = @symlink($this->workingDir . "/real", $symlinked);
 
         if (!$result) {
             $this->markTestSkipped('Symbolic links for directories not supported on this platform');
@@ -234,7 +279,84 @@ class FilesystemTest extends TestCase
 
         $result = $fs->removeDirectory($symlinkedTrailingSlash);
         $this->assertTrue($result);
-        $this->assertFalse(file_exists($symlinkedTrailingSlash));
-        $this->assertFalse(file_exists($symlinked));
+        $this->assertFileNotExists($symlinkedTrailingSlash);
+        $this->assertFileNotExists($symlinked);
+    }
+
+    public function testJunctions()
+    {
+        @mkdir($this->workingDir . '/real/nesting/testing', 0777, true);
+        $fs = new Filesystem();
+
+        // Non-Windows systems do not support this and will return false on all tests, and an exception on creation
+        if (!defined('PHP_WINDOWS_VERSION_BUILD')) {
+            $this->assertFalse($fs->isJunction($this->workingDir));
+            $this->assertFalse($fs->removeJunction($this->workingDir));
+            $this->setExpectedException('LogicException', 'not available on non-Windows platform');
+        }
+
+        $target = $this->workingDir . '/real/../real/nesting';
+        $junction = $this->workingDir . '/junction';
+
+        // Create and detect junction
+        $fs->junction($target, $junction);
+        $this->assertTrue($fs->isJunction($junction));
+        $this->assertFalse($fs->isJunction($target));
+        $this->assertTrue($fs->isJunction($target . '/../../junction'));
+        $this->assertFalse($fs->isJunction($junction . '/../real'));
+        $this->assertTrue($fs->isJunction($junction . '/../junction'));
+
+        // Remove junction
+        $this->assertTrue(is_dir($junction));
+        $this->assertTrue($fs->removeJunction($junction));
+        $this->assertFalse(is_dir($junction));
+    }
+
+    public function testCopy()
+    {
+        @mkdir($this->workingDir . '/foo/bar', 0777, true);
+        @mkdir($this->workingDir . '/foo/baz', 0777, true);
+        file_put_contents($this->workingDir . '/foo/foo.file', 'foo');
+        file_put_contents($this->workingDir . '/foo/bar/foobar.file', 'foobar');
+        file_put_contents($this->workingDir . '/foo/baz/foobaz.file', 'foobaz');
+        file_put_contents($this->testFile, 'testfile');
+
+        $fs = new Filesystem();
+
+        $result1 = $fs->copy($this->workingDir . '/foo', $this->workingDir . '/foop');
+        $this->assertTrue($result1, 'Copying directory failed.');
+        $this->assertTrue(is_dir($this->workingDir . '/foop'), 'Not a directory: ' . $this->workingDir . '/foop');
+        $this->assertTrue(is_dir($this->workingDir . '/foop/bar'), 'Not a directory: ' . $this->workingDir . '/foop/bar');
+        $this->assertTrue(is_dir($this->workingDir . '/foop/baz'), 'Not a directory: ' . $this->workingDir . '/foop/baz');
+        $this->assertTrue(is_file($this->workingDir . '/foop/foo.file'), 'Not a file: ' . $this->workingDir . '/foop/foo.file');
+        $this->assertTrue(is_file($this->workingDir . '/foop/bar/foobar.file'), 'Not a file: ' . $this->workingDir . '/foop/bar/foobar.file');
+        $this->assertTrue(is_file($this->workingDir . '/foop/baz/foobaz.file'), 'Not a file: ' . $this->workingDir . '/foop/baz/foobaz.file');
+
+        $result2 = $fs->copy($this->testFile, $this->workingDir . '/testfile.file');
+        $this->assertTrue($result2);
+        $this->assertTrue(is_file($this->workingDir . '/testfile.file'));
+    }
+
+    public function testCopyThenRemove()
+    {
+        @mkdir($this->workingDir . '/foo/bar', 0777, true);
+        @mkdir($this->workingDir . '/foo/baz', 0777, true);
+        file_put_contents($this->workingDir . '/foo/foo.file', 'foo');
+        file_put_contents($this->workingDir . '/foo/bar/foobar.file', 'foobar');
+        file_put_contents($this->workingDir . '/foo/baz/foobaz.file', 'foobaz');
+        file_put_contents($this->testFile, 'testfile');
+
+        $fs = new Filesystem();
+
+        $fs->copyThenRemove($this->testFile, $this->workingDir . '/testfile.file');
+        $this->assertFalse(is_file($this->testFile), 'Still a file: ' . $this->testFile);
+
+        $fs->copyThenRemove($this->workingDir . '/foo', $this->workingDir . '/foop');
+        $this->assertFalse(is_file($this->workingDir . '/foo/baz/foobaz.file'), 'Still a file: ' . $this->workingDir . '/foo/baz/foobaz.file');
+        $this->assertFalse(is_file($this->workingDir . '/foo/bar/foobar.file'), 'Still a file: ' . $this->workingDir . '/foo/bar/foobar.file');
+        $this->assertFalse(is_file($this->workingDir . '/foo/foo.file'), 'Still a file: ' . $this->workingDir . '/foo/foo.file');
+        $this->assertFalse(is_dir($this->workingDir . '/foo/baz'), 'Still a directory: ' . $this->workingDir . '/foo/baz');
+        $this->assertFalse(is_dir($this->workingDir . '/foo/bar'), 'Still a directory: ' . $this->workingDir . '/foo/bar');
+        $this->assertFalse(is_dir($this->workingDir . '/foo'), 'Still a directory: ' . $this->workingDir . '/foo');
     }
 }

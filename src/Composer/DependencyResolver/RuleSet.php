@@ -22,15 +22,21 @@ class RuleSet implements \IteratorAggregate, \Countable
     const TYPE_JOB = 1;
     const TYPE_LEARNED = 4;
 
+    /**
+     * READ-ONLY: Lookup table for rule id to rule object
+     *
+     * @var Rule[]
+     */
+    public $ruleById;
+
     protected static $types = array(
-        -1 => 'UNKNOWN',
+        255 => 'UNKNOWN',
         self::TYPE_PACKAGE => 'PACKAGE',
         self::TYPE_JOB => 'JOB',
         self::TYPE_LEARNED => 'LEARNED',
     );
 
     protected $rules;
-    protected $ruleById;
     protected $nextRuleId;
 
     protected $rulesByHash;
@@ -52,6 +58,24 @@ class RuleSet implements \IteratorAggregate, \Countable
             throw new \OutOfBoundsException('Unknown rule type: ' . $type);
         }
 
+        $hash = $rule->getHash();
+
+        // Do not add if rule already exists
+        if (isset($this->rulesByHash[$hash])) {
+            $potentialDuplicates = $this->rulesByHash[$hash];
+            if (is_array($potentialDuplicates)) {
+                foreach ($potentialDuplicates as $potentialDuplicate) {
+                    if ($rule->equals($potentialDuplicate)) {
+                        return;
+                    }
+                }
+            } else {
+                if ($rule->equals($potentialDuplicates)) {
+                    return;
+                }
+            }
+        }
+
         if (!isset($this->rules[$type])) {
             $this->rules[$type] = array();
         }
@@ -60,14 +84,15 @@ class RuleSet implements \IteratorAggregate, \Countable
         $this->ruleById[$this->nextRuleId] = $rule;
         $rule->setType($type);
 
-        $rule->setId($this->nextRuleId);
         $this->nextRuleId++;
 
-        $hash = $rule->getHash();
         if (!isset($this->rulesByHash[$hash])) {
-            $this->rulesByHash[$hash] = array($rule);
-        } else {
+            $this->rulesByHash[$hash] = $rule;
+        } elseif (is_array($this->rulesByHash[$hash])) {
             $this->rulesByHash[$hash][] = $rule;
+        } else {
+            $originalRule = $this->rulesByHash[$hash];
+            $this->rulesByHash[$hash] = array($originalRule, $rule);
         }
     }
 
@@ -125,36 +150,27 @@ class RuleSet implements \IteratorAggregate, \Countable
     public function getTypes()
     {
         $types = self::$types;
-        unset($types[-1]);
+        unset($types[255]);
 
         return array_keys($types);
     }
 
-    public function containsEqual($rule)
-    {
-        if (isset($this->rulesByHash[$rule->getHash()])) {
-            $potentialDuplicates = $this->rulesByHash[$rule->getHash()];
-            foreach ($potentialDuplicates as $potentialDuplicate) {
-                if ($rule->equals($potentialDuplicate)) {
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
-
-    public function __toString()
+    public function getPrettyString(Pool $pool = null)
     {
         $string = "\n";
         foreach ($this->rules as $type => $rules) {
             $string .= str_pad(self::$types[$type], 8, ' ') . ": ";
             foreach ($rules as $rule) {
-                $string .= $rule."\n";
+                $string .= ($pool ? $rule->getPrettyString($pool) : $rule)."\n";
             }
             $string .= "\n\n";
         }
 
         return $string;
+    }
+
+    public function __toString()
+    {
+        return $this->getPrettyString(null);
     }
 }

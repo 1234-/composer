@@ -16,14 +16,17 @@ use Composer\Package\AliasPackage;
 use Composer\Package\PackageInterface;
 use Composer\Package\CompletePackageInterface;
 use Composer\Package\Version\VersionParser;
+use Composer\Semver\Constraint\ConstraintInterface;
+use Composer\Semver\Constraint\Constraint;
 
 /**
  * A repository implementation that simply stores packages in an array
  *
  * @author Nils Adermann <naderman@naderman.de>
  */
-class ArrayRepository implements RepositoryInterface
+class ArrayRepository extends BaseRepository
 {
+    /** @var PackageInterface[] */
     protected $packages;
 
     public function __construct(array $packages = array())
@@ -36,39 +39,47 @@ class ArrayRepository implements RepositoryInterface
     /**
      * {@inheritDoc}
      */
-    public function findPackage($name, $version)
+    public function findPackage($name, $constraint)
     {
-        // normalize version & name
-        $versionParser = new VersionParser();
-        $version = $versionParser->normalize($version);
         $name = strtolower($name);
 
+        if (!$constraint instanceof ConstraintInterface) {
+            $versionParser = new VersionParser();
+            $constraint = $versionParser->parseConstraints($constraint);
+        }
+
         foreach ($this->getPackages() as $package) {
-            if ($name === $package->getName() && $version === $package->getVersion()) {
-                return $package;
+            if ($name === $package->getName()) {
+                $pkgConstraint = new Constraint('==', $package->getVersion());
+                if ($constraint->matches($pkgConstraint)) {
+                    return $package;
+                }
             }
         }
+
+        return null;
     }
 
     /**
      * {@inheritDoc}
      */
-    public function findPackages($name, $version = null)
+    public function findPackages($name, $constraint = null)
     {
         // normalize name
         $name = strtolower($name);
-
-        // normalize version
-        if (null !== $version) {
-            $versionParser = new VersionParser();
-            $version = $versionParser->normalize($version);
-        }
-
         $packages = array();
 
+        if (null !== $constraint && !$constraint instanceof ConstraintInterface) {
+            $versionParser = new VersionParser();
+            $constraint = $versionParser->parseConstraints($constraint);
+        }
+
         foreach ($this->getPackages() as $package) {
-            if ($package->getName() === $name && (null === $version || $version === $package->getVersion())) {
-                $packages[] = $package;
+            if ($name === $package->getName()) {
+                $pkgConstraint = new Constraint('==', $package->getVersion());
+                if (null === $constraint || $constraint->matches($pkgConstraint)) {
+                    $packages[] = $package;
+                }
             }
         }
 
@@ -78,7 +89,7 @@ class ArrayRepository implements RepositoryInterface
     /**
      * {@inheritDoc}
      */
-    public function search($query, $mode = 0)
+    public function search($query, $mode = 0, $type = null)
     {
         $regex = '{(?:'.implode('|', preg_split('{\s+}', $query)).')}i';
 
@@ -91,9 +102,13 @@ class ArrayRepository implements RepositoryInterface
             if (preg_match($regex, $name)
                 || ($mode === self::SEARCH_FULLTEXT && $package instanceof CompletePackageInterface && preg_match($regex, implode(' ', (array) $package->getKeywords()) . ' ' . $package->getDescription()))
             ) {
+                if (null !== $type && $package->getType() !== $type) {
+                    continue;
+                }
+
                 $matches[$name] = array(
                     'name' => $package->getPrettyName(),
-                    'description' => $package->getDescription(),
+                    'description' => $package instanceof CompletePackageInterface ? $package->getDescription() : null,
                 );
             }
         }

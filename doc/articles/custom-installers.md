@@ -51,7 +51,7 @@ An example composer.json of such a template package would be:
 ## Creating an Installer
 
 A Custom Installer is defined as a class that implements the
-[`Composer\Installer\InstallerInterface`][3] and is usually distributed in a
+[`Composer\Installer\InstallerInterface`][4] and is usually distributed in a
 Composer Plugin.
 
 A basic Installer Plugin would thus compose of three files:
@@ -84,10 +84,16 @@ Example:
         "class": "phpDocumentor\\Composer\\TemplateInstallerPlugin"
     },
     "require": {
-        "composer-plugin-api": "1.0.0"
+        "composer-plugin-api": "^1.0"
+    },
+    "require-dev": {
+        "composer/composer": "^1.3"
     }
 }
 ```
+
+The example above has Composer itself in its require-dev, which allows you to use
+the Composer classes in your test suite for example.
 
 ### The Plugin class
 
@@ -159,7 +165,7 @@ class TemplateInstaller extends LibraryInstaller
     /**
      * {@inheritDoc}
      */
-    public function getPackageBasePath(PackageInterface $package)
+    public function getInstallPath(PackageInterface $package)
     {
         $prefix = substr($package->getPrettyName(), 0, 23);
         if ('phpdocumentor/template-' !== $prefix) {

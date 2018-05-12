@@ -26,7 +26,7 @@ class HgExcludeFilter extends BaseExcludeFilter
 
     /**
      * Either HG_IGNORE_REGEX or HG_IGNORE_GLOB
-     * @var integer
+     * @var int
      */
     protected $patternMode;
 
@@ -70,9 +70,9 @@ class HgExcludeFilter extends BaseExcludeFilter
 
         if ($this->patternMode == self::HG_IGNORE_GLOB) {
             return $this->patternFromGlob($line);
-        } else {
-            return $this->patternFromRegex($line);
         }
+
+        return $this->patternFromRegex($line);
     }
 
     /**

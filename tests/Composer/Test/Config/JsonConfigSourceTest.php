@@ -14,10 +14,14 @@ namespace Composer\Test\Json;
 
 use Composer\Config\JsonConfigSource;
 use Composer\Json\JsonFile;
+use Composer\TestCase;
 use Composer\Util\Filesystem;
 
-class JsonConfigSourceTest extends \PHPUnit_Framework_TestCase
+class JsonConfigSourceTest extends TestCase
 {
+    /** @var Filesystem */
+    private $fs;
+    /** @var string */
     private $workingDir;
 
     protected function fixturePath($name)
@@ -28,8 +32,7 @@ class JsonConfigSourceTest extends \PHPUnit_Framework_TestCase
     protected function setUp()
     {
         $this->fs = new Filesystem;
-        $this->workingDir = realpath(sys_get_temp_dir()).DIRECTORY_SEPARATOR.'cmptest';
-        $this->fs->ensureDirectoryExists($this->workingDir);
+        $this->workingDir = $this->getUniqueTmpDirectory();
     }
 
     protected function tearDown()
@@ -37,6 +40,107 @@ class JsonConfigSourceTest extends \PHPUnit_Framework_TestCase
         if (is_dir($this->workingDir)) {
             $this->fs->removeDirectory($this->workingDir);
         }
+    }
+
+    public function testAddRepository()
+    {
+        $config = $this->workingDir.'/composer.json';
+        copy($this->fixturePath('composer-repositories.json'), $config);
+        $jsonConfigSource = new JsonConfigSource(new JsonFile($config));
+        $jsonConfigSource->addRepository('example_tld', array('type' => 'git', 'url' => 'example.tld'));
+
+        $this->assertFileEquals($this->fixturePath('config/config-with-exampletld-repository.json'), $config);
+    }
+
+    public function testAddRepositoryWithOptions()
+    {
+        $config = $this->workingDir.'/composer.json';
+        copy($this->fixturePath('composer-repositories.json'), $config);
+        $jsonConfigSource = new JsonConfigSource(new JsonFile($config));
+        $jsonConfigSource->addRepository('example_tld', array(
+            'type' => 'composer',
+            'url' => 'https://example.tld',
+            'options' => array(
+                'ssl' => array(
+                    'local_cert' => '/home/composer/.ssl/composer.pem',
+                ),
+            ),
+        ));
+
+        $this->assertFileEquals($this->fixturePath('config/config-with-exampletld-repository-and-options.json'), $config);
+    }
+
+    public function testRemoveRepository()
+    {
+        $config = $this->workingDir.'/composer.json';
+        copy($this->fixturePath('config/config-with-exampletld-repository.json'), $config);
+        $jsonConfigSource = new JsonConfigSource(new JsonFile($config));
+        $jsonConfigSource->removeRepository('example_tld');
+
+        $this->assertFileEquals($this->fixturePath('composer-repositories.json'), $config);
+    }
+
+    public function testAddPackagistRepositoryWithFalseValue()
+    {
+        $config = $this->workingDir.'/composer.json';
+        copy($this->fixturePath('composer-repositories.json'), $config);
+        $jsonConfigSource = new JsonConfigSource(new JsonFile($config));
+        $jsonConfigSource->addRepository('packagist', false);
+
+        $this->assertFileEquals($this->fixturePath('config/config-with-packagist-false.json'), $config);
+    }
+
+    public function testRemovePackagist()
+    {
+        $config = $this->workingDir.'/composer.json';
+        copy($this->fixturePath('config/config-with-packagist-false.json'), $config);
+        $jsonConfigSource = new JsonConfigSource(new JsonFile($config));
+        $jsonConfigSource->removeRepository('packagist');
+
+        $this->assertFileEquals($this->fixturePath('composer-repositories.json'), $config);
+    }
+
+    /**
+     * Test addLink()
+     *
+     * @param string $sourceFile     Source file
+     * @param string $type           Type (require, require-dev, provide, suggest, replace, conflict)
+     * @param string $name           Name
+     * @param string $value          Value
+     * @param string $compareAgainst File to compare against after making changes
+     *
+     * @dataProvider provideAddLinkData
+     */
+    public function testAddLink($sourceFile, $type, $name, $value, $compareAgainst)
+    {
+        $composerJson = $this->workingDir.'/composer.json';
+        copy($sourceFile, $composerJson);
+        $jsonConfigSource = new JsonConfigSource(new JsonFile($composerJson));
+
+        $jsonConfigSource->addLink($type, $name, $value);
+
+        $this->assertFileEquals($compareAgainst, $composerJson);
+    }
+
+    /**
+     * Test removeLink()
+     *
+     * @param string $sourceFile     Source file
+     * @param string $type           Type (require, require-dev, provide, suggest, replace, conflict)
+     * @param string $name           Name
+     * @param string $compareAgainst File to compare against after making changes
+     *
+     * @dataProvider provideRemoveLinkData
+     */
+    public function testRemoveLink($sourceFile, $type, $name, $compareAgainst)
+    {
+        $composerJson = $this->workingDir.'/composer.json';
+        copy($sourceFile, $composerJson);
+        $jsonConfigSource = new JsonConfigSource(new JsonFile($composerJson));
+
+        $jsonConfigSource->removeLink($type, $name);
+
+        $this->assertFileEquals($compareAgainst, $composerJson);
     }
 
     protected function addLinkDataArguments($type, $name, $value, $fixtureBasename, $before)
@@ -88,28 +192,6 @@ class JsonConfigSourceTest extends \PHPUnit_Framework_TestCase
         );
     }
 
-    /**
-     * Test addLink()
-     *
-     * @param string $sourceFile     Source file
-     * @param string $type           Type (require, require-dev, provide, suggest, replace, conflict)
-     * @param string $name           Name
-     * @param string $value          Value
-     * @param string $compareAgainst File to compare against after making changes
-     *
-     * @dataProvider provideAddLinkData
-     */
-    public function testAddLink($sourceFile, $type, $name, $value, $compareAgainst)
-    {
-        $composerJson = $this->workingDir.'/composer.json';
-        copy($sourceFile, $composerJson);
-        $jsonConfigSource = new JsonConfigSource(new JsonFile($composerJson));
-
-        $jsonConfigSource->addLink($type, $name, $value);
-
-        $this->assertFileEquals($compareAgainst, $composerJson);
-    }
-
     protected function removeLinkDataArguments($type, $name, $fixtureBasename, $after = null)
     {
         return array(
@@ -155,26 +237,5 @@ class JsonConfigSourceTest extends \PHPUnit_Framework_TestCase
             $this->removeLinkDataArguments('conflict', 'my-vend/my-old-app', 'conflict-to-oneOfEverything', $oneOfEverything),
             $this->removeLinkDataArguments('conflict', 'my-vend/my-old-app', 'conflict-to-twoOfEverything', $twoOfEverything),
         );
-    }
-
-    /**
-     * Test removeLink()
-     *
-     * @param string $sourceFile     Source file
-     * @param string $type           Type (require, require-dev, provide, suggest, replace, conflict)
-     * @param string $name           Name
-     * @param string $compareAgainst File to compare against after making changes
-     *
-     * @dataProvider provideRemoveLinkData
-     */
-    public function testRemoveLink($sourceFile, $type, $name, $compareAgainst)
-    {
-        $composerJson = $this->workingDir.'/composer.json';
-        copy($sourceFile, $composerJson);
-        $jsonConfigSource = new JsonConfigSource(new JsonFile($composerJson));
-
-        $jsonConfigSource->removeLink($type, $name);
-
-        $this->assertFileEquals($compareAgainst, $composerJson);
     }
 }

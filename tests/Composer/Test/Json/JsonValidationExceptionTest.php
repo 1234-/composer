@@ -13,8 +13,9 @@
 namespace Composer\Test\Json;
 
 use Composer\Json\JsonValidationException;
+use PHPUnit\Framework\TestCase;
 
-class JsonValidationExceptionTest extends \PHPUnit_Framework_TestCase
+class JsonValidationExceptionTest extends TestCase
 {
     /**
      * @dataProvider errorProvider
@@ -36,7 +37,7 @@ class JsonValidationExceptionTest extends \PHPUnit_Framework_TestCase
     {
         return array(
             array('test message', array()),
-            array(null, null)
+            array(null, null),
         );
     }
 }
