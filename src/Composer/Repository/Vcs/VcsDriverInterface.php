@@ -34,6 +34,23 @@ interface VcsDriverInterface
     public function getComposerInformation($identifier);
 
     /**
+     * Return the content of $file or null if the file does not exist.
+     *
+     * @param  string      $file
+     * @param  string      $identifier
+     * @return string|null
+     */
+    public function getFileContent($file, $identifier);
+
+    /**
+     * Get the changedate for $identifier.
+     *
+     * @param  string         $identifier
+     * @return \DateTime|null
+     */
+    public function getChangeDate($identifier);
+
+    /**
      * Return the root identifier (trunk, master, default/tip ..)
      *
      * @return string Identifier
@@ -55,8 +72,8 @@ interface VcsDriverInterface
     public function getTags();
 
     /**
-     * @param  string $identifier Any identifier to a specific branch/tag/commit
-     * @return array  With type, url reference and shasum keys.
+     * @param  string     $identifier Any identifier to a specific branch/tag/commit
+     * @return array|null With type, url reference and shasum keys.
      */
     public function getDist($identifier);
 
@@ -77,14 +94,13 @@ interface VcsDriverInterface
      * Return true if the repository has a composer file for a given identifier,
      * false otherwise.
      *
-     * @param  string  $identifier Any identifier to a specific branch/tag/commit
-     * @return boolean Whether the repository has a composer file for a given identifier.
+     * @param  string $identifier Any identifier to a specific branch/tag/commit
+     * @return bool   Whether the repository has a composer file for a given identifier.
      */
     public function hasComposerFile($identifier);
 
     /**
      * Performs any cleanup necessary as the driver is not longer needed
-     *
      */
     public function cleanup();
 

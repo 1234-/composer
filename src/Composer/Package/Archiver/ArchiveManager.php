@@ -16,7 +16,9 @@ use Composer\Downloader\DownloadManager;
 use Composer\Package\PackageInterface;
 use Composer\Package\RootPackageInterface;
 use Composer\Util\Filesystem;
+use Composer\Util\Loop;
 use Composer\Json\JsonFile;
+use Composer\Package\CompletePackageInterface;
 
 /**
  * @author Matthieu Moquet <matthieu@moquet.net>
@@ -24,8 +26,14 @@ use Composer\Json\JsonFile;
  */
 class ArchiveManager
 {
+    /** @var DownloadManager */
     protected $downloadManager;
+    /** @var Loop */
+    protected $loop;
 
+    /**
+     * @var ArchiverInterface[]
+     */
     protected $archivers = array();
 
     /**
@@ -36,9 +44,10 @@ class ArchiveManager
     /**
      * @param DownloadManager $downloadManager A manager used to download package sources
      */
-    public function __construct(DownloadManager $downloadManager)
+    public function __construct(DownloadManager $downloadManager, Loop $loop)
     {
         $this->downloadManager = $downloadManager;
+        $this->loop = $loop;
     }
 
     /**
@@ -66,18 +75,23 @@ class ArchiveManager
     /**
      * Generate a distinct filename for a particular version of a package.
      *
-     * @param PackageInterface $package The package to get a name for
+     * @param CompletePackageInterface $package The package to get a name for
      *
      * @return string A filename without an extension
      */
-    public function getPackageFilename(PackageInterface $package)
+    public function getPackageFilename(CompletePackageInterface $package)
     {
-        $nameParts = array(preg_replace('#[^a-z0-9-_]#i', '-', $package->getName()));
+        if ($package->getArchiveName()) {
+            $baseName = $package->getArchiveName();
+        } else {
+            $baseName = preg_replace('#[^a-z0-9-_]#i', '-', $package->getName());
+        }
+        $nameParts = array($baseName);
 
         if (preg_match('{^[a-f0-9]{40}$}', $package->getDistReference())) {
-            $nameParts = array_merge($nameParts, array($package->getDistReference(), $package->getDistType()));
+            array_push($nameParts, $package->getDistReference(), $package->getDistType());
         } else {
-            $nameParts = array_merge($nameParts, array($package->getPrettyVersion(), $package->getDistReference()));
+            array_push($nameParts, $package->getPrettyVersion(), $package->getDistReference());
         }
 
         if ($package->getSourceReference()) {
@@ -94,14 +108,17 @@ class ArchiveManager
     /**
      * Create an archive of the specified package.
      *
-     * @param  PackageInterface          $package   The package to archive
-     * @param  string                    $format    The format of the archive (zip, tar, ...)
-     * @param  string                    $targetDir The diretory where to build the archive
+     * @param  CompletePackageInterface  $package       The package to archive
+     * @param  string                    $format        The format of the archive (zip, tar, ...)
+     * @param  string                    $targetDir     The directory where to build the archive
+     * @param  string|null               $fileName      The relative file name to use for the archive, or null to generate
+     *                                                  the package name. Note that the format will be appended to this name
+     * @param  bool                      $ignoreFilters Ignore filters when looking for files in the package
      * @throws \InvalidArgumentException
      * @throws \RuntimeException
      * @return string                    The path of the created archive
      */
-    public function archive(PackageInterface $package, $format, $targetDir)
+    public function archive(CompletePackageInterface $package, $format, $targetDir, $fileName = null, $ignoreFilters = false)
     {
         if (empty($format)) {
             throw new \InvalidArgumentException('Format must be specified');
@@ -122,7 +139,42 @@ class ArchiveManager
         }
 
         $filesystem = new Filesystem();
-        $packageName = $this->getPackageFilename($package);
+
+        if ($package instanceof RootPackageInterface) {
+            $sourcePath = realpath('.');
+        } else {
+            // Directory used to download the sources
+            $sourcePath = sys_get_temp_dir().'/composer_archive'.uniqid();
+            $filesystem->ensureDirectoryExists($sourcePath);
+
+            try {
+                // Download sources
+                $promise = $this->downloadManager->download($package, $sourcePath);
+                $this->loop->wait(array($promise));
+                $this->downloadManager->install($package, $sourcePath);
+            } catch (\Exception $e) {
+                $filesystem->removeDirectory($sourcePath);
+                throw  $e;
+            }
+
+            // Check exclude from downloaded composer.json
+            if (file_exists($composerJsonPath = $sourcePath.'/composer.json')) {
+                $jsonFile = new JsonFile($composerJsonPath);
+                $jsonData = $jsonFile->read();
+                if (!empty($jsonData['archive']['name'])) {
+                    $package->setArchiveName($jsonData['archive']['name']);
+                }
+                if (!empty($jsonData['archive']['exclude'])) {
+                    $package->setArchiveExcludes($jsonData['archive']['exclude']);
+                }
+            }
+        }
+
+        if (null === $fileName) {
+            $packageName = $this->getPackageFilename($package);
+        } else {
+            $packageName = $fileName;
+        }
 
         // Archive filename
         $filesystem->ensureDirectoryExists($targetDir);
@@ -133,37 +185,18 @@ class ArchiveManager
             return $target;
         }
 
-        if ($package instanceof RootPackageInterface) {
-            $sourcePath = realpath('.');
-        } else {
-            // Directory used to download the sources
-            $sourcePath = sys_get_temp_dir().'/composer_archiver/arch'.uniqid();
-            $filesystem->ensureDirectoryExists($sourcePath);
-
-            // Download sources
-            $this->downloadManager->download($package, $sourcePath);
-
-            // Check exclude from downloaded composer.json
-            if (file_exists($composerJsonPath = $sourcePath.'/composer.json')) {
-                $jsonFile = new JsonFile($composerJsonPath);
-                $jsonData = $jsonFile->read();
-                if (!empty($jsonData['archive']['exclude'])) {
-                    $package->setArchiveExcludes($jsonData['archive']['exclude']);
-                }
-            }
-        }
-
         // Create the archive
-        $tempTarget = sys_get_temp_dir().'/composer_archiver/arch'.uniqid().'.'.$format;
+        $tempTarget = sys_get_temp_dir().'/composer_archive'.uniqid().'.'.$format;
         $filesystem->ensureDirectoryExists(dirname($tempTarget));
 
-        $archivePath = $usableArchiver->archive($sourcePath, $tempTarget, $format, $package->getArchiveExcludes());
-        rename($archivePath, $target);
+        $archivePath = $usableArchiver->archive($sourcePath, $tempTarget, $format, $package->getArchiveExcludes(), $ignoreFilters);
+        $filesystem->rename($archivePath, $target);
 
         // cleanup temporary download
         if (!$package instanceof RootPackageInterface) {
             $filesystem->removeDirectory($sourcePath);
         }
+        $filesystem->remove($tempTarget);
 
         return $target;
     }

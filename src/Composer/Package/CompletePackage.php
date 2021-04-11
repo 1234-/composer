@@ -27,10 +27,13 @@ class CompletePackage extends Package implements CompletePackageInterface
     protected $homepage;
     protected $scripts = array();
     protected $support = array();
+    protected $funding = array();
     protected $abandoned = false;
+    protected $archiveName;
+    protected $archiveExcludes = array();
 
     /**
-     * @param array $scripts
+     * {@inheritDoc}
      */
     public function setScripts(array $scripts)
     {
@@ -46,11 +49,9 @@ class CompletePackage extends Package implements CompletePackageInterface
     }
 
     /**
-     * Set the repositories
-     *
-     * @param array $repositories
+     * {@inheritDoc}
      */
-    public function setRepositories($repositories)
+    public function setRepositories(array $repositories)
     {
         $this->repositories = $repositories;
     }
@@ -64,9 +65,7 @@ class CompletePackage extends Package implements CompletePackageInterface
     }
 
     /**
-     * Set the license
-     *
-     * @param array $license
+     * {@inheritDoc}
      */
     public function setLicense(array $license)
     {
@@ -82,9 +81,7 @@ class CompletePackage extends Package implements CompletePackageInterface
     }
 
     /**
-     * Set the keywords
-     *
-     * @param array $keywords
+     * {@inheritDoc}
      */
     public function setKeywords(array $keywords)
     {
@@ -100,9 +97,7 @@ class CompletePackage extends Package implements CompletePackageInterface
     }
 
     /**
-     * Set the authors
-     *
-     * @param array $authors
+     * {@inheritDoc}
      */
     public function setAuthors(array $authors)
     {
@@ -118,9 +113,7 @@ class CompletePackage extends Package implements CompletePackageInterface
     }
 
     /**
-     * Set the description
-     *
-     * @param string $description
+     * {@inheritDoc}
      */
     public function setDescription($description)
     {
@@ -136,9 +129,7 @@ class CompletePackage extends Package implements CompletePackageInterface
     }
 
     /**
-     * Set the homepage
-     *
-     * @param string $homepage
+     * {@inheritDoc}
      */
     public function setHomepage($homepage)
     {
@@ -154,9 +145,7 @@ class CompletePackage extends Package implements CompletePackageInterface
     }
 
     /**
-     * Set the support information
-     *
-     * @param array $support
+     * {@inheritDoc}
      */
     public function setSupport(array $support)
     {
@@ -172,15 +161,31 @@ class CompletePackage extends Package implements CompletePackageInterface
     }
 
     /**
-     * @return boolean
+     * {@inheritDoc}
      */
-    public function isAbandoned()
+    public function setFunding(array $funding)
     {
-        return (boolean) $this->abandoned;
+        $this->funding = $funding;
     }
 
     /**
-     * @param boolean|string $abandoned
+     * {@inheritDoc}
+     */
+    public function getFunding()
+    {
+        return $this->funding;
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function isAbandoned()
+    {
+        return (bool) $this->abandoned;
+    }
+
+    /**
+     * {@inheritDoc}
      */
     public function setAbandoned($abandoned)
     {
@@ -188,12 +193,42 @@ class CompletePackage extends Package implements CompletePackageInterface
     }
 
     /**
-     * If the package is abandoned and has a suggested replacement, this method returns it
-     *
-     * @return string|null
+     * {@inheritDoc}
      */
     public function getReplacementPackage()
     {
-        return is_string($this->abandoned)? $this->abandoned : null;
+        return \is_string($this->abandoned) ? $this->abandoned : null;
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function setArchiveName($name)
+    {
+        $this->archiveName = $name;
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function getArchiveName()
+    {
+        return $this->archiveName;
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function setArchiveExcludes(array $excludes)
+    {
+        $this->archiveExcludes = $excludes;
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function getArchiveExcludes()
+    {
+        return $this->archiveExcludes;
     }
 }

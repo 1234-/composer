@@ -13,15 +13,14 @@
 namespace Composer\Test\DependencyResolver;
 
 use Composer\DependencyResolver\Request;
-use Composer\DependencyResolver\Pool;
 use Composer\Repository\ArrayRepository;
-use Composer\TestCase;
+use Composer\Semver\Constraint\MatchAllConstraint;
+use Composer\Test\TestCase;
 
 class RequestTest extends TestCase
 {
-    public function testRequestInstallAndRemove()
+    public function testRequestInstall()
     {
-        $pool = new Pool;
         $repo = new ArrayRepository;
         $foo = $this->getPackage('foo', '1');
         $bar = $this->getPackage('bar', '1');
@@ -30,25 +29,20 @@ class RequestTest extends TestCase
         $repo->addPackage($foo);
         $repo->addPackage($bar);
         $repo->addPackage($foobar);
-        $pool->addRepository($repo);
 
-        $request = new Request($pool);
-        $request->install('foo');
-        $request->fix('bar');
-        $request->remove('foobar');
+        $request = new Request();
+        $request->requireName('foo');
 
         $this->assertEquals(
             array(
-                array('cmd' => 'install', 'packageName' => 'foo', 'constraint' => null, 'fixed' => false),
-                array('cmd' => 'install', 'packageName' => 'bar', 'constraint' => null, 'fixed' => true),
-                array('cmd' => 'remove', 'packageName' => 'foobar', 'constraint' => null, 'fixed' => false),
+                'foo' => new MatchAllConstraint(),
             ),
-            $request->getJobs());
+            $request->getRequires()
+        );
     }
 
     public function testRequestInstallSamePackageFromDifferentRepositories()
     {
-        $pool = new Pool;
         $repo1 = new ArrayRepository;
         $repo2 = new ArrayRepository;
 
@@ -58,29 +52,14 @@ class RequestTest extends TestCase
         $repo1->addPackage($foo1);
         $repo2->addPackage($foo2);
 
-        $pool->addRepository($repo1);
-        $pool->addRepository($repo2);
-
-        $request = new Request($pool);
-        $request->install('foo', $constraint = $this->getVersionConstraint('=', '1'));
+        $request = new Request();
+        $request->requireName('foo', $constraint = $this->getVersionConstraint('=', '1'));
 
         $this->assertEquals(
             array(
-                    array('cmd' => 'install', 'packageName' => 'foo', 'constraint' => $constraint, 'fixed' => false),
+                'foo' => $constraint,
             ),
-            $request->getJobs()
+            $request->getRequires()
         );
-    }
-
-    public function testUpdateAll()
-    {
-        $pool = new Pool;
-        $request = new Request($pool);
-
-        $request->updateAll();
-
-        $this->assertEquals(
-            array(array('cmd' => 'update-all')),
-            $request->getJobs());
     }
 }

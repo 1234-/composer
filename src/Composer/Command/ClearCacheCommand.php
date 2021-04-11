@@ -20,17 +20,20 @@ use Symfony\Component\Console\Output\OutputInterface;
 /**
  * @author David Neilsen <petah.p@gmail.com>
  */
-class ClearCacheCommand extends Command
+class ClearCacheCommand extends BaseCommand
 {
     protected function configure()
     {
         $this
             ->setName('clear-cache')
-            ->setAliases(array('clearcache'))
+            ->setAliases(array('clearcache', 'cc'))
             ->setDescription('Clears composer\'s internal package cache.')
-            ->setHelp(<<<EOT
+            ->setHelp(
+                <<<EOT
 The <info>clear-cache</info> deletes all cached packages from composer's
 cache directory.
+
+Read more at https://getcomposer.org/doc/03-cli.md#clear-cache-clearcache-cc
 EOT
             )
         ;
@@ -42,30 +45,33 @@ EOT
         $io = $this->getIO();
 
         $cachePaths = array(
-            'cache-dir' => $config->get('cache-dir'),
-            'cache-files-dir' => $config->get('cache-files-dir'),
-            'cache-repo-dir' => $config->get('cache-repo-dir'),
             'cache-vcs-dir' => $config->get('cache-vcs-dir'),
+            'cache-repo-dir' => $config->get('cache-repo-dir'),
+            'cache-files-dir' => $config->get('cache-files-dir'),
+            'cache-dir' => $config->get('cache-dir'),
         );
 
         foreach ($cachePaths as $key => $cachePath) {
             $cachePath = realpath($cachePath);
             if (!$cachePath) {
-                $io->write("<info>Cache directory does not exist ($key): $cachePath</info>");
+                $io->writeError("<info>Cache directory does not exist ($key): $cachePath</info>");
 
-                return;
+                continue;
             }
             $cache = new Cache($io, $cachePath);
+            $cache->setReadOnly($config->get('cache-read-only'));
             if (!$cache->isEnabled()) {
-                $io->write("<info>Cache is not enabled ($key): $cachePath</info>");
+                $io->writeError("<info>Cache is not enabled ($key): $cachePath</info>");
 
-                return;
+                continue;
             }
 
-            $io->write("<info>Clearing cache ($key): $cachePath</info>");
-            $cache->gc(0, 0);
+            $io->writeError("<info>Clearing cache ($key): $cachePath</info>");
+            $cache->clear();
         }
 
-        $io->write('<info>All caches cleared.</info>');
+        $io->writeError('<info>All caches cleared.</info>');
+
+        return 0;
     }
 }

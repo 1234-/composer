@@ -13,8 +13,9 @@
 namespace Composer\Test\Installer;
 
 use Composer\Installer\MetapackageInstaller;
+use Composer\Test\TestCase;
 
-class MetapackageInstallerTest extends \PHPUnit_Framework_TestCase
+class MetapackageInstallerTest extends TestCase
 {
     private $repository;
     private $installer;
@@ -22,11 +23,11 @@ class MetapackageInstallerTest extends \PHPUnit_Framework_TestCase
 
     protected function setUp()
     {
-        $this->repository = $this->getMock('Composer\Repository\InstalledRepositoryInterface');
+        $this->repository = $this->getMockBuilder('Composer\Repository\InstalledRepositoryInterface')->getMock();
 
-        $this->io = $this->getMock('Composer\IO\IOInterface');
+        $this->io = $this->getMockBuilder('Composer\IO\IOInterface')->getMock();
 
-        $this->installer = new MetapackageInstaller();
+        $this->installer = new MetapackageInstaller($this->io);
     }
 
     public function testInstall()
@@ -44,7 +45,13 @@ class MetapackageInstallerTest extends \PHPUnit_Framework_TestCase
     public function testUpdate()
     {
         $initial = $this->createPackageMock();
-        $target  = $this->createPackageMock();
+        $initial->expects($this->once())
+            ->method('getVersion')
+            ->will($this->returnValue('1.0.0'));
+        $target = $this->createPackageMock();
+        $target->expects($this->once())
+            ->method('getVersion')
+            ->will($this->returnValue('1.0.1'));
 
         $this->repository
             ->expects($this->exactly(2))

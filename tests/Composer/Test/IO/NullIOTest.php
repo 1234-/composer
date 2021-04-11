@@ -13,7 +13,7 @@
 namespace Composer\Test\IO;
 
 use Composer\IO\NullIO;
-use Composer\TestCase;
+use Composer\Test\TestCase;
 
 class NullIOTest extends TestCase
 {
@@ -42,7 +42,7 @@ class NullIOTest extends TestCase
     {
         $io = new NullIO();
 
-        $this->assertInternalType('array', $io->getAuthentications());
+        $this->assertTrue(is_array($io->getAuthentications()));
         $this->assertEmpty($io->getAuthentications());
         $this->assertEquals(array('username' => null, 'password' => null), $io->getAuthentication('foo'));
     }
@@ -66,5 +66,12 @@ class NullIOTest extends TestCase
         $io = new NullIO();
 
         $this->assertEquals('foo', $io->askAndValidate('question', 'validator', false, 'foo'));
+    }
+
+    public function testSelect()
+    {
+        $io = new NullIO();
+
+        $this->assertEquals('1', $io->select('question', array('item1', 'item2'), '1', 2, 'foo', true));
     }
 }

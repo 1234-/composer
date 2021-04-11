@@ -12,6 +12,8 @@
 
 namespace Composer\Downloader;
 
+use Composer\Package\PackageInterface;
+
 /**
  * Downloader for tar files: tar, tar.gz or tar.bz2
  *
@@ -22,10 +24,12 @@ class TarDownloader extends ArchiveDownloader
     /**
      * {@inheritDoc}
      */
-    protected function extract($file, $path)
+    protected function extract(PackageInterface $package, $file, $path)
     {
         // Can throw an UnexpectedValueException
         $archive = new \PharData($file);
         $archive->extractTo($path, null, true);
+
+        return \React\Promise\resolve();
     }
 }

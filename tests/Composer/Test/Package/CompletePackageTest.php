@@ -13,8 +13,8 @@
 namespace Composer\Test\Package;
 
 use Composer\Package\Package;
-use Composer\Package\Version\VersionParser;
-use Composer\TestCase;
+use Composer\Semver\VersionParser;
+use Composer\Test\TestCase;
 
 class CompletePackageTest extends TestCase
 {

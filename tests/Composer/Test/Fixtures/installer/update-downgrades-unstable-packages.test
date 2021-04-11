@@ -8,7 +8,8 @@ Downgrading from unstable to more stable package should work even if already ins
             "package": [
                 {
                     "name": "a/a", "version": "dev-master",
-                    "source": { "reference": "abcd", "url": "", "type": "git" }
+                    "source": { "reference": "abcd", "url": "", "type": "git" },
+                    "default-branch": true
                 },
                 {
                     "name": "a/a", "version": "1.0.0",
@@ -17,7 +18,8 @@ Downgrading from unstable to more stable package should work even if already ins
                 },
                 {
                     "name": "b/b", "version": "dev-master",
-                    "source": { "reference": "abcd", "url": "", "type": "git" }
+                    "source": { "reference": "abcd", "url": "", "type": "git" },
+                    "default-branch": true
                 },
                 {
                     "name": "b/b", "version": "1.0.0",
@@ -36,14 +38,17 @@ Downgrading from unstable to more stable package should work even if already ins
 [
     {
         "name": "a/a", "version": "dev-master",
-        "source": { "reference": "abcd", "url": "", "type": "git" }
+        "source": { "reference": "abcd", "url": "", "type": "git" },
+        "default-branch": true
     },
     {
         "name": "b/b", "version": "dev-master",
-        "source": { "reference": "abcd", "url": "", "type": "git" }
+        "source": { "reference": "abcd", "url": "", "type": "git" },
+        "default-branch": true
     }
 ]
 --RUN--
 update
 --EXPECT--
-Updating a/a (dev-master abcd) to a/a (1.0.0)
+Marking a/a (9999999-dev abcd) as uninstalled, alias of a/a (dev-master abcd)
+Downgrading a/a (dev-master abcd => 1.0.0)

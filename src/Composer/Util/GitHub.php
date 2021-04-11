@@ -12,35 +12,39 @@
 
 namespace Composer\Util;
 
+use Composer\Factory;
 use Composer\IO\IOInterface;
 use Composer\Config;
 use Composer\Downloader\TransportException;
-use Composer\Json\JsonFile;
 
 /**
  * @author Jordi Boggiano <j.boggiano@seld.be>
  */
 class GitHub
 {
+    /** @var IOInterface */
     protected $io;
+    /** @var Config */
     protected $config;
+    /** @var ProcessExecutor */
     protected $process;
-    protected $remoteFilesystem;
+    /** @var HttpDownloader */
+    protected $httpDownloader;
 
     /**
      * Constructor.
      *
-     * @param IOInterface      $io               The IO instance
-     * @param Config           $config           The composer configuration
-     * @param ProcessExecutor  $process          Process instance, injectable for mocking
-     * @param RemoteFilesystem $remoteFilesystem Remote Filesystem, injectable for mocking
+     * @param IOInterface     $io             The IO instance
+     * @param Config          $config         The composer configuration
+     * @param ProcessExecutor $process        Process instance, injectable for mocking
+     * @param HttpDownloader  $httpDownloader Remote Filesystem, injectable for mocking
      */
-    public function __construct(IOInterface $io, Config $config, ProcessExecutor $process = null, RemoteFilesystem $remoteFilesystem = null)
+    public function __construct(IOInterface $io, Config $config, ProcessExecutor $process = null, HttpDownloader $httpDownloader = null)
     {
         $this->io = $io;
         $this->config = $config;
-        $this->process = $process ?: new ProcessExecutor;
-        $this->remoteFilesystem = $remoteFilesystem ?: new RemoteFilesystem($io, $config);
+        $this->process = $process ?: new ProcessExecutor($io);
+        $this->httpDownloader = $httpDownloader ?: Factory::createHttpDownloader($this->io, $config);
     }
 
     /**
@@ -76,124 +80,105 @@ class GitHub
      */
     public function authorizeOAuthInteractively($originUrl, $message = null)
     {
-        $attemptCounter = 0;
-
-        $apiUrl = ('github.com' === $originUrl) ? 'api.github.com' : $originUrl . '/api/v3';
-
         if ($message) {
-            $this->io->write($message);
+            $this->io->writeError($message);
         }
-        $this->io->write('The credentials will be swapped for an OAuth token stored in '.$this->config->getAuthConfigSource()->getName().', your password will not be stored');
-        $this->io->write('To revoke access to this token you can visit https://github.com/settings/applications');
-        while ($attemptCounter++ < 5) {
-            try {
-                if (empty($otp) || !$this->io->hasAuthentication($originUrl)) {
-                    $username = $this->io->ask('Username: ');
-                    $password = $this->io->askAndHideAnswer('Password: ');
-                    $otp      = null;
 
-                    $this->io->setAuthentication($originUrl, $username, $password);
-                }
+        $note = 'Composer';
+        if ($this->config->get('github-expose-hostname') === true && 0 === $this->process->execute('hostname', $output)) {
+            $note .= ' on ' . trim($output);
+        }
+        $note .= ' ' . date('Y-m-d Hi');
 
-                // build up OAuth app name
-                $appName = 'Composer';
-                if ($this->config->get('github-expose-hostname') === true && 0 === $this->process->execute('hostname', $output)) {
-                    $appName .= ' on ' . trim($output);
-                } else {
-                    $appName .= ' [' . date('YmdHis') . ']';
-                }
+        $url = 'https://'.$originUrl.'/settings/tokens/new?scopes=repo&description=' . str_replace('%20', '+', rawurlencode($note));
+        $this->io->writeError(sprintf('Head to %s', $url));
+        $this->io->writeError(sprintf('to retrieve a token. It will be stored in "%s" for future use by Composer.', $this->config->getAuthConfigSource()->getName()));
 
-                $headers = array();
-                if ($otp) {
-                    $headers = array('X-GitHub-OTP: ' . $otp);
-                }
+        $token = trim($this->io->askAndHideAnswer('Token (hidden): '));
 
-                // try retrieving an existing token with the same name
-                $contents = null;
-                $auths = JsonFile::parseJson($this->remoteFilesystem->getContents($originUrl, 'https://'. $apiUrl . '/authorizations', false, array(
-                    'retry-auth-failure' => false,
-                    'http' => array(
-                        'header' => $headers
-                    )
-                )));
-                foreach ($auths as $auth) {
-                    if (
-                        isset($auth['app']['name'])
-                        && 0 === strpos($auth['app']['name'], $appName)
-                        && $auth['app']['url'] === 'https://getcomposer.org/'
-                    ) {
-                        $this->io->write('An existing OAuth token for Composer is present and will be reused');
+        if (!$token) {
+            $this->io->writeError('<warning>No token given, aborting.</warning>');
+            $this->io->writeError('You can also add it manually later by using "composer config --global --auth github-oauth.github.com <token>"');
 
-                        $contents['token'] = $auth['token'];
-                        break;
-                    }
-                }
+            return false;
+        }
 
-                // no existing token, create one
-                if (empty($contents['token'])) {
-                    $headers[] = 'Content-Type: application/json';
+        $this->io->setAuthentication($originUrl, $token, 'x-oauth-basic');
 
-                    $contents = JsonFile::parseJson($this->remoteFilesystem->getContents($originUrl, 'https://'. $apiUrl . '/authorizations', false, array(
-                        'retry-auth-failure' => false,
-                        'http' => array(
-                            'method' => 'POST',
-                            'follow_location' => false,
-                            'header' => $headers,
-                            'content' => json_encode(array(
-                                'scopes' => array('repo'),
-                                'note' => $appName,
-                                'note_url' => 'https://getcomposer.org/',
-                            )),
-                        )
-                    )));
-                    $this->io->write('Token successfully created');
-                }
-            } catch (TransportException $e) {
-                if (in_array($e->getCode(), array(403, 401))) {
-                    // 401 when authentication was supplied, handle 2FA if required.
-                    if ($this->io->hasAuthentication($originUrl)) {
-                        $headerNames = array_map(function ($header) {
-                            return strtolower(strstr($header, ':', true));
-                        }, $e->getHeaders());
+        try {
+            $apiUrl = ('github.com' === $originUrl) ? 'api.github.com/' : $originUrl . '/api/v3/';
 
-                        if ($key = array_search('x-github-otp', $headerNames)) {
-                            $headers = $e->getHeaders();
-                            list($required, $method) = array_map('trim', explode(';', substr(strstr($headers[$key], ':'), 1)));
+            $this->httpDownloader->get('https://'. $apiUrl, array(
+                'retry-auth-failure' => false,
+            ));
+        } catch (TransportException $e) {
+            if (in_array($e->getCode(), array(403, 401))) {
+                $this->io->writeError('<error>Invalid token provided.</error>');
+                $this->io->writeError('You can also add it manually later by using "composer config --global --auth github-oauth.github.com <token>"');
 
-                            if ('required' === $required) {
-                                $this->io->write('Two-factor Authentication');
-
-                                if ('app' === $method) {
-                                    $this->io->write('Open the two-factor authentication app on your device to view your authentication code and verify your identity.');
-                                }
-
-                                if ('sms' === $method) {
-                                    $this->io->write('You have been sent an SMS message with an authentication code to verify your identity.');
-                                }
-
-                                $otp = $this->io->ask('Authentication Code: ');
-
-                                continue;
-                            }
-                        }
-                    }
-
-                    $this->io->write('Invalid credentials.');
-                    continue;
-                }
-
-                throw $e;
+                return false;
             }
 
-            $this->io->setAuthentication($originUrl, $contents['token'], 'x-oauth-basic');
-
-            // store value in user config
-            $this->config->getConfigSource()->removeConfigSetting('github-oauth.'.$originUrl);
-            $this->config->getAuthConfigSource()->addConfigSetting('github-oauth.'.$originUrl, $contents['token']);
-
-            return true;
+            throw $e;
         }
 
-        throw new \RuntimeException("Invalid GitHub credentials 5 times in a row, aborting.");
+        // store value in user config
+        $this->config->getConfigSource()->removeConfigSetting('github-oauth.'.$originUrl);
+        $this->config->getAuthConfigSource()->addConfigSetting('github-oauth.'.$originUrl, $token);
+
+        $this->io->writeError('<info>Token stored successfully.</info>');
+
+        return true;
+    }
+
+    /**
+     * Extract ratelimit from response.
+     *
+     * @param array $headers Headers from Composer\Downloader\TransportException.
+     *
+     * @return array Associative array with the keys limit and reset.
+     */
+    public function getRateLimit(array $headers)
+    {
+        $rateLimit = array(
+            'limit' => '?',
+            'reset' => '?',
+        );
+
+        foreach ($headers as $header) {
+            $header = trim($header);
+            if (false === strpos($header, 'X-RateLimit-')) {
+                continue;
+            }
+            list($type, $value) = explode(':', $header, 2);
+            switch ($type) {
+                case 'X-RateLimit-Limit':
+                    $rateLimit['limit'] = (int) trim($value);
+                    break;
+                case 'X-RateLimit-Reset':
+                    $rateLimit['reset'] = date('Y-m-d H:i:s', (int) trim($value));
+                    break;
+            }
+        }
+
+        return $rateLimit;
+    }
+
+    /**
+     * Finds whether a request failed due to rate limiting
+     *
+     * @param array $headers Headers from Composer\Downloader\TransportException.
+     *
+     * @return bool
+     */
+    public function isRateLimited(array $headers)
+    {
+        foreach ($headers as $header) {
+            if (preg_match('{^X-RateLimit-Remaining: *0$}i', trim($header))) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

@@ -15,6 +15,9 @@ namespace Composer\Repository;
 use Composer\IO\IOInterface;
 use Composer\Config;
 use Composer\EventDispatcher\EventDispatcher;
+use Composer\Package\PackageInterface;
+use Composer\Util\HttpDownloader;
+use Composer\Util\ProcessExecutor;
 
 /**
  * Repositories manager.
@@ -25,51 +28,66 @@ use Composer\EventDispatcher\EventDispatcher;
  */
 class RepositoryManager
 {
+    /** @var InstalledRepositoryInterface */
     private $localRepository;
+    /** @var list<RepositoryInterface> */
     private $repositories = array();
+    /** @var array<string, string> */
     private $repositoryClasses = array();
+    /** @var IOInterface */
     private $io;
+    /** @var Config */
     private $config;
+    /** @var HttpDownloader */
+    private $httpDownloader;
+    /** @var ?EventDispatcher */
     private $eventDispatcher;
+    /** @var ProcessExecutor */
+    private $process;
 
-    public function __construct(IOInterface $io, Config $config, EventDispatcher $eventDispatcher = null)
+    public function __construct(IOInterface $io, Config $config, HttpDownloader $httpDownloader, EventDispatcher $eventDispatcher = null, ProcessExecutor $process = null)
     {
         $this->io = $io;
         $this->config = $config;
+        $this->httpDownloader = $httpDownloader;
         $this->eventDispatcher = $eventDispatcher;
+        $this->process = $process ?: new ProcessExecutor($io);
     }
 
     /**
      * Searches for a package by it's name and version in managed repositories.
      *
-     * @param string $name    package name
-     * @param string $version package version
+     * @param string                                                 $name       package name
+     * @param string|\Composer\Semver\Constraint\ConstraintInterface $constraint package version or version constraint to match against
      *
      * @return PackageInterface|null
      */
-    public function findPackage($name, $version)
+    public function findPackage($name, $constraint)
     {
         foreach ($this->repositories as $repository) {
-            if ($package = $repository->findPackage($name, $version)) {
+            /** @var RepositoryInterface $repository */
+            if ($package = $repository->findPackage($name, $constraint)) {
                 return $package;
             }
         }
+
+        return null;
     }
 
     /**
      * Searches for all packages matching a name and optionally a version in managed repositories.
      *
-     * @param string $name    package name
-     * @param string $version package version
+     * @param string                                                 $name       package name
+     * @param string|\Composer\Semver\Constraint\ConstraintInterface $constraint package version or version constraint to match against
      *
-     * @return array
+     * @return PackageInterface[]
      */
-    public function findPackages($name, $version)
+    public function findPackages($name, $constraint)
     {
         $packages = array();
 
-        foreach ($this->repositories as $repository) {
-            $packages = array_merge($packages, $repository->findPackages($name, $version));
+        foreach ($this->getRepositories() as $repository) {
+            $packages = array_merge($packages, $repository->findPackages($name, $constraint));
         }
 
         return $packages;
@@ -86,22 +104,50 @@ class RepositoryManager
     }
 
     /**
+     * Adds a repository to the beginning of the chain
+     *
+     * This is useful when injecting additional repositories that should trump Packagist, e.g. from a plugin.
+     *
+     * @param RepositoryInterface $repository repository instance
+     */
+    public function prependRepository(RepositoryInterface $repository)
+    {
+        array_unshift($this->repositories, $repository);
+    }
+
+    /**
      * Returns a new repository for a specific installation type.
      *
      * @param  string                    $type   repository type
      * @param  array                     $config repository configuration
-     * @return RepositoryInterface
+     * @param  string                    $name   repository name
      * @throws \InvalidArgumentException if repository for provided type is not registered
+     * @return RepositoryInterface
      */
-    public function createRepository($type, $config)
+    public function createRepository($type, $config, $name = null)
     {
         if (!isset($this->repositoryClasses[$type])) {
             throw new \InvalidArgumentException('Repository type is not registered: '.$type);
         }
 
+        if (isset($config['packagist']) && false === $config['packagist']) {
+            $this->io->writeError('<warning>Repository "'.$name.'" ('.json_encode($config).') has a packagist key which should be in its own repository definition</warning>');
+        }
+
         $class = $this->repositoryClasses[$type];
 
-        return new $class($config, $this->io, $this->config, $this->eventDispatcher);
+        if (isset($config['only']) || isset($config['exclude']) || isset($config['canonical'])) {
+            $filterConfig = $config;
+            unset($config['only'], $config['exclude'], $config['canonical']);
+        }
+
+        $repository = new $class($config, $this->io, $this->config, $this->httpDownloader, $this->eventDispatcher, $this->process);
+
+        if (isset($filterConfig)) {
+            $repository = new FilterRepository($repository, $filterConfig);
+        }
+
+        return $repository;
     }
 
     /**
@@ -118,7 +164,7 @@ class RepositoryManager
     /**
      * Returns all repositories, except local one.
      *
-     * @return array
+     * @return RepositoryInterface[]
      */
     public function getRepositories()
     {
@@ -128,9 +174,9 @@ class RepositoryManager
     /**
      * Sets local repository for the project.
      *
-     * @param WritableRepositoryInterface $repository repository instance
+     * @param InstalledRepositoryInterface $repository repository instance
      */
-    public function setLocalRepository(WritableRepositoryInterface $repository)
+    public function setLocalRepository(InstalledRepositoryInterface $repository)
     {
         $this->localRepository = $repository;
     }
@@ -138,23 +184,10 @@ class RepositoryManager
     /**
      * Returns local repository for the project.
      *
-     * @return WritableRepositoryInterface
+     * @return InstalledRepositoryInterface
      */
     public function getLocalRepository()
     {
         return $this->localRepository;
-    }
-
-    /**
-     * Returns all local repositories for the project.
-     *
-     * @deprecated getLocalDevRepository is gone, so this is useless now, just use getLocalRepository instead
-     * @return array[WritableRepositoryInterface]
-     */
-    public function getLocalRepositories()
-    {
-        trigger_error('This method is deprecated, use getLocalRepository instead since the getLocalDevRepository is now gone', E_USER_DEPRECATED);
-
-        return array($this->localRepository);
     }
 }

@@ -12,18 +12,18 @@
 
 namespace Composer\Test\Package\Loader;
 
-use Composer\Package;
 use Composer\Package\Loader\ValidatingArrayLoader;
 use Composer\Package\Loader\InvalidPackageException;
+use Composer\Test\TestCase;
 
-class ValidatingArrayLoaderTest extends \PHPUnit_Framework_TestCase
+class ValidatingArrayLoaderTest extends TestCase
 {
     /**
      * @dataProvider successProvider
      */
     public function testLoadSuccess($config)
     {
-        $internalLoader = $this->getMock('Composer\Package\Loader\LoaderInterface');
+        $internalLoader = $this->getMockBuilder('Composer\Package\Loader\LoaderInterface')->getMock();
         $internalLoader
             ->expects($this->once())
             ->method('load')
@@ -47,7 +47,7 @@ class ValidatingArrayLoaderTest extends \PHPUnit_Framework_TestCase
                     'description' => 'Foo bar',
                     'version' => '1.0.0',
                     'type' => 'library',
-                    'keywords' => array('a', 'b_c', 'D E'),
+                    'keywords' => array('a', 'b_c', 'D E', 'éîüø', '微信'),
                     'homepage' => 'https://foo.com',
                     'time' => '2010-10-10T10:10:10+00:00',
                     'license' => 'MIT',
@@ -70,11 +70,23 @@ class ValidatingArrayLoaderTest extends \PHPUnit_Framework_TestCase
                         'wiki' => 'http://example.org/',
                         'source' => 'http://example.org/',
                         'irc' => 'irc://example.org/example',
+                        'rss' => 'http://example.org/rss',
+                        'chat' => 'http://example.org/chat',
+                    ),
+                    'funding' => array(
+                        array(
+                            'type' => 'example',
+                            'url' => 'https://example.org/fund',
+                        ),
+                        array(
+                            'url' => 'https://example.org/fund',
+                        ),
                     ),
                     'require' => array(
                         'a/b' => '1.*',
                         'b/c' => '~2',
                         'example' => '>2.0-dev,<2.4-dev',
+                        'composer-runtime-api' => '*',
                     ),
                     'require-dev' => array(
                         'a/b' => '1.*',
@@ -118,8 +130,8 @@ class ValidatingArrayLoaderTest extends \PHPUnit_Framework_TestCase
                     'repositories' => array(
                         array(
                             'type' => 'composer',
-                            'url' => 'http://packagist.org/',
-                        )
+                            'url' => 'https://repo.packagist.org/',
+                        ),
                     ),
                     'config' => array(
                         'bin-dir' => 'bin',
@@ -140,19 +152,46 @@ class ValidatingArrayLoaderTest extends \PHPUnit_Framework_TestCase
                         'branch-alias' => array(
                             'dev-master' => '2.0-dev',
                             'dev-old' => '1.0.x-dev',
+                            '3.x-dev' => '3.1.x-dev',
                         ),
                     ),
                     'bin' => array(
                         'bin/foo',
                         'bin/bar',
                     ),
-                    'transport-options' => array('ssl' => array('local_cert' => '/opt/certs/test.pem'))
+                    'transport-options' => array('ssl' => array('local_cert' => '/opt/certs/test.pem')),
                 ),
             ),
-            array( // test as array
+            array( // test licenses as array
                 array(
                     'name' => 'foo/bar',
                     'license' => array('MIT', 'WTFPL'),
+                ),
+            ),
+            array( // test bin as string
+                array(
+                    'name' => 'foo/bar',
+                    'bin' => 'bin1',
+                ),
+            ),
+            array( // package name with dashes
+                array(
+                    'name' => 'foo/bar-baz',
+                ),
+            ),
+            array( // package name with dashes
+                array(
+                    'name' => 'foo/bar--baz',
+                ),
+            ),
+            array( // package name with dashes
+                array(
+                    'name' => 'foo/b-ar--ba-z',
+                ),
+            ),
+            array( // package name with dashes
+                array(
+                    'name' => 'npm-asset/angular--core',
                 ),
             ),
         );
@@ -163,7 +202,7 @@ class ValidatingArrayLoaderTest extends \PHPUnit_Framework_TestCase
      */
     public function testLoadFailureThrowsException($config, $expectedErrors)
     {
-        $internalLoader = $this->getMock('Composer\Package\Loader\LoaderInterface');
+        $internalLoader = $this->getMockBuilder('Composer\Package\Loader\LoaderInterface')->getMock();
         $loader = new ValidatingArrayLoader($internalLoader, true, null, ValidatingArrayLoader::CHECK_ALL);
         try {
             $loader->load($config);
@@ -181,7 +220,7 @@ class ValidatingArrayLoaderTest extends \PHPUnit_Framework_TestCase
      */
     public function testLoadWarnings($config, $expectedWarnings)
     {
-        $internalLoader = $this->getMock('Composer\Package\Loader\LoaderInterface');
+        $internalLoader = $this->getMockBuilder('Composer\Package\Loader\LoaderInterface')->getMock();
         $loader = new ValidatingArrayLoader($internalLoader, true, null, ValidatingArrayLoader::CHECK_ALL);
 
         $loader->load($config);
@@ -201,7 +240,7 @@ class ValidatingArrayLoaderTest extends \PHPUnit_Framework_TestCase
 
             return;
         }
-        $internalLoader = $this->getMock('Composer\Package\Loader\LoaderInterface');
+        $internalLoader = $this->getMockBuilder('Composer\Package\Loader\LoaderInterface')->getMock();
         $internalLoader
             ->expects($this->once())
             ->method('load')
@@ -214,15 +253,24 @@ class ValidatingArrayLoaderTest extends \PHPUnit_Framework_TestCase
 
     public function errorProvider()
     {
-        return array(
-            array(
+        $invalidNames = array(
+            'foo',
+            'foo/-bar-',
+            'foo/-bar',
+        );
+        $invalidNaming = array();
+        foreach ($invalidNames as $invalidName) {
+            $invalidNaming[] = array(
                 array(
-                    'name' => 'foo',
+                    'name' => $invalidName,
                 ),
                 array(
-                    'name : invalid value (foo), must match [A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*'
-                )
-            ),
+                    "name : invalid value ($invalidName), must match [A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*",
+                ),
+            );
+        }
+
+        return array_merge($invalidNaming, array(
             array(
                 array(
                     'name' => 'foo/bar',
@@ -230,7 +278,7 @@ class ValidatingArrayLoaderTest extends \PHPUnit_Framework_TestCase
                 ),
                 array(
                     'homepage : should be a string, integer given',
-                )
+                ),
             ),
             array(
                 array(
@@ -241,7 +289,7 @@ class ValidatingArrayLoaderTest extends \PHPUnit_Framework_TestCase
                 ),
                 array(
                     'support.source : invalid value, must be a string',
-                )
+                ),
             ),
             array(
                 array(
@@ -249,8 +297,8 @@ class ValidatingArrayLoaderTest extends \PHPUnit_Framework_TestCase
                     'autoload' => 'strings',
                 ),
                 array(
-                    'autoload : should be an array, string given'
-                )
+                    'autoload : should be an array, string given',
+                ),
             ),
             array(
                 array(
@@ -262,8 +310,8 @@ class ValidatingArrayLoaderTest extends \PHPUnit_Framework_TestCase
                     ),
                 ),
                 array(
-                    'autoload : invalid value (psr0), must be one of psr-0, psr-4, classmap, files'
-                )
+                    'autoload : invalid value (psr0), must be one of psr-0, psr-4, classmap, files, exclude-from-classmap',
+                ),
             ),
             array(
                 array(
@@ -271,23 +319,66 @@ class ValidatingArrayLoaderTest extends \PHPUnit_Framework_TestCase
                     'transport-options' => 'test',
                 ),
                 array(
-                    'transport-options : should be an array, string given'
-                )
+                    'transport-options : should be an array, string given',
+                ),
             ),
-        );
+        ));
     }
 
     public function warningProvider()
     {
-        return array(
+        $invalidNames = array(
+            'fo--oo/bar',
+            'fo-oo/bar__baz',
+            'fo-oo/bar_.baz',
+            'foo/bar---baz',
+        );
+        $invalidNaming = array();
+        foreach ($invalidNames as $invalidName) {
+            $invalidNaming[] = array(
+                array(
+                    'name' => $invalidName,
+                ),
+                array(
+                    "Deprecation warning: Your package name $invalidName is invalid, it should have a vendor name, a forward slash, and a package name. The vendor and package name can be words separated by -, . or _. The complete name should match \"^[a-z0-9]([_.-]?[a-z0-9]+)*/[a-z0-9](([_.]?|-{0,2})[a-z0-9]+)*$\". Make sure you fix this as Composer 2.0 will error.",
+                ),
+                false,
+            );
+        }
+
+        return array_merge($invalidNaming, array(
             array(
                 array(
                     'name' => 'foo/bar',
                     'homepage' => 'foo:bar',
                 ),
                 array(
-                    'homepage : invalid value (foo:bar), must be an http/https URL'
-                )
+                    'homepage : invalid value (foo:bar), must be an http/https URL',
+                ),
+            ),
+            array(
+                array(
+                    'name' => 'foo/bar.json',
+                ),
+                array(
+                    'Deprecation warning: Your package name foo/bar.json is invalid, package names can not end in .json, consider renaming it or perhaps using a -json suffix instead. Make sure you fix this as Composer 2.0 will error.',
+                ),
+            ),
+            array(
+                array(
+                    'name' => 'com1/foo',
+                ),
+                array(
+                    'Deprecation warning: Your package name com1/foo is reserved, package and vendor names can not match any of: nul, con, prn, aux, com1, com2, com3, com4, com5, com6, com7, com8, com9, lpt1, lpt2, lpt3, lpt4, lpt5, lpt6, lpt7, lpt8, lpt9. Make sure you fix this as Composer 2.0 will error.',
+                ),
+            ),
+            array(
+                array(
+                    'name' => 'Foo/Bar',
+                ),
+                array(
+                    'Deprecation warning: Your package name Foo/Bar is invalid, it should not contain uppercase characters. We suggest using foo/bar instead. Make sure you fix this as Composer 2.0 will error.',
+                ),
             ),
             array(
                 array(
@@ -297,6 +388,7 @@ class ValidatingArrayLoaderTest extends \PHPUnit_Framework_TestCase
                         'forum' => 'foo:bar',
                         'issues' => 'foo:bar',
                         'wiki' => 'foo:bar',
+                        'chat' => 'foo:bar',
                     ),
                 ),
                 array(
@@ -304,7 +396,8 @@ class ValidatingArrayLoaderTest extends \PHPUnit_Framework_TestCase
                     'support.forum : invalid value (foo:bar), must be an http/https URL',
                     'support.issues : invalid value (foo:bar), must be an http/https URL',
                     'support.wiki : invalid value (foo:bar), must be an http/https URL',
-                )
+                    'support.chat : invalid value (foo:bar), must be an http/https URL',
+                ),
             ),
             array(
                 array(
@@ -312,18 +405,70 @@ class ValidatingArrayLoaderTest extends \PHPUnit_Framework_TestCase
                     'require' => array(
                         'foo/baz' => '*',
                         'bar/baz' => '>=1.0',
-                        'bar/foo' => 'dev-master',
                         'bar/hacked' => '@stable',
+                        'bar/woo' => '1.0.0',
                     ),
                 ),
                 array(
                     'require.foo/baz : unbound version constraints (*) should be avoided',
                     'require.bar/baz : unbound version constraints (>=1.0) should be avoided',
-                    'require.bar/foo : unbound version constraints (dev-master) should be avoided',
                     'require.bar/hacked : unbound version constraints (@stable) should be avoided',
+                    'require.bar/woo : exact version constraints (1.0.0) should be avoided if the package follows semantic versioning',
                 ),
-                false
+                false,
             ),
-        );
+            array(
+                array(
+                    'name' => 'foo/bar',
+                    'require' => array(
+                        'Foo/Baz' => '^1.0',
+                    ),
+                ),
+                array(
+                    'Deprecation warning: require.Foo/Baz is invalid, it should not contain uppercase characters. Please use foo/baz instead. Make sure you fix this as Composer 2.0 will error.',
+                ),
+                false,
+            ),
+            array(
+                array(
+                    'name' => 'foo/bar',
+                    'require' => array(
+                        'bar/unstable' => '0.3.0',
+                    ),
+                ),
+                array(
+                    // using an exact version constraint for an unstable version should not trigger a warning
+                ),
+                false,
+            ),
+            array(
+                array(
+                    'name' => 'foo/bar',
+                    'extra' => array(
+                        'branch-alias' => array(
+                            '5.x-dev' => '3.1.x-dev',
+                        ),
+                    ),
+                ),
+                array(
+                    'extra.branch-alias.5.x-dev : the target branch (3.1.x-dev) is not a valid numeric alias for this version',
+                ),
+                false,
+            ),
+            array(
+                array(
+                    'name' => 'foo/bar',
+                    'extra' => array(
+                        'branch-alias' => array(
+                            '5.x-dev' => '3.1-dev',
+                        ),
+                    ),
+                ),
+                array(
+                    'extra.branch-alias.5.x-dev : the target branch (3.1-dev) is not a valid numeric alias for this version',
+                ),
+                false,
+            ),
+        ));
     }
 }

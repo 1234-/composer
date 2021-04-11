@@ -13,7 +13,8 @@
 namespace Composer\Test\Repository;
 
 use Composer\Repository\ArrayRepository;
-use Composer\TestCase;
+use Composer\Repository\RepositoryInterface;
+use Composer\Test\TestCase;
 
 class ArrayRepositoryTest extends TestCase
 {
@@ -22,7 +23,7 @@ class ArrayRepositoryTest extends TestCase
         $repo = new ArrayRepository;
         $repo->addPackage($this->getPackage('foo', '1'));
 
-        $this->assertEquals(1, count($repo));
+        $this->assertCount(1, $repo);
     }
 
     public function testRemovePackage()
@@ -33,11 +34,11 @@ class ArrayRepositoryTest extends TestCase
         $repo->addPackage($this->getPackage('foo', '1'));
         $repo->addPackage($package);
 
-        $this->assertEquals(2, count($repo));
+        $this->assertCount(2, $repo);
 
         $repo->removePackage($this->getPackage('foo', '1'));
 
-        $this->assertEquals(1, count($repo));
+        $this->assertCount(1, $repo);
         $this->assertEquals(array($package), $repo->getPackages());
     }
 
@@ -67,7 +68,7 @@ class ArrayRepositoryTest extends TestCase
         $this->assertEquals('bar', $bar[0]->getName());
     }
 
-    public function testAutomaticallyAddAliasedPackage()
+    public function testAutomaticallyAddAliasedPackageButNotRemove()
     {
         $repo = new ArrayRepository();
 
@@ -76,8 +77,58 @@ class ArrayRepositoryTest extends TestCase
 
         $repo->addPackage($alias);
 
-        $this->assertEquals(2, count($repo));
+        $this->assertCount(2, $repo);
         $this->assertTrue($repo->hasPackage($this->getPackage('foo', '1')));
         $this->assertTrue($repo->hasPackage($this->getPackage('foo', '2')));
+
+        $repo->removePackage($alias);
+
+        $this->assertCount(1, $repo);
+    }
+
+    public function testSearch()
+    {
+        $repo = new ArrayRepository();
+
+        $repo->addPackage($this->getPackage('foo', '1'));
+        $repo->addPackage($this->getPackage('bar', '1'));
+
+        $this->assertSame(
+            array(array('name' => 'foo', 'description' => null)),
+            $repo->search('foo', RepositoryInterface::SEARCH_FULLTEXT)
+        );
+
+        $this->assertSame(
+            array(array('name' => 'bar', 'description' => null)),
+            $repo->search('bar')
+        );
+
+        $this->assertEmpty(
+            $repo->search('foobar')
+        );
+    }
+
+    public function testSearchWithPackageType()
+    {
+        $repo = new ArrayRepository();
+
+        $repo->addPackage($this->getPackage('foo', '1', 'Composer\Package\CompletePackage'));
+        $repo->addPackage($this->getPackage('bar', '1', 'Composer\Package\CompletePackage'));
+
+        $package = $this->getPackage('foobar', '1', 'Composer\Package\CompletePackage');
+        $package->setType('composer-plugin');
+        $repo->addPackage($package);
+
+        $this->assertSame(
+            array(array('name' => 'foo', 'description' => null)),
+            $repo->search('foo', RepositoryInterface::SEARCH_FULLTEXT, 'library')
+        );
+
+        $this->assertEmpty($repo->search('bar', RepositoryInterface::SEARCH_FULLTEXT, 'package'));
+
+        $this->assertSame(
+            array(array('name' => 'foobar', 'description' => null)),
+            $repo->search('foo', 0, 'composer-plugin')
+        );
     }
 }

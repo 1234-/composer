@@ -12,70 +12,59 @@
 
 namespace Composer\Test\DependencyResolver;
 
+use Composer\DependencyResolver\GenericRule;
 use Composer\DependencyResolver\Rule;
+use Composer\DependencyResolver\RuleSet;
 use Composer\DependencyResolver\Pool;
-use Composer\Repository\ArrayRepository;
-use Composer\TestCase;
+use Composer\Package\Link;
+use Composer\Semver\Constraint\MatchAllConstraint;
+use Composer\Test\TestCase;
 
 class RuleTest extends TestCase
 {
-    protected $pool;
-
-    public function setUp()
-    {
-        $this->pool = new Pool;
-    }
-
     public function testGetHash()
     {
-        $rule = new Rule($this->pool, array(123), 'job1', null);
+        $rule = new GenericRule(array(123), Rule::RULE_ROOT_REQUIRE, null);
 
-        $this->assertEquals(substr(md5('123'), 0, 5), $rule->getHash());
-    }
-
-    public function testSetAndGetId()
-    {
-        $rule = new Rule($this->pool, array(), 'job1', null);
-        $rule->setId(666);
-
-        $this->assertEquals(666, $rule->getId());
+        $hash = unpack('ihash', md5('123', true));
+        $this->assertEquals($hash['hash'], $rule->getHash());
     }
 
     public function testEqualsForRulesWithDifferentHashes()
     {
-        $rule = new Rule($this->pool, array(1, 2), 'job1', null);
-        $rule2 = new Rule($this->pool, array(1, 3), 'job1', null);
+        $rule = new GenericRule(array(1, 2), Rule::RULE_ROOT_REQUIRE, null);
+        $rule2 = new GenericRule(array(1, 3), Rule::RULE_ROOT_REQUIRE, null);
 
         $this->assertFalse($rule->equals($rule2));
     }
 
     public function testEqualsForRulesWithDifferLiteralsQuantity()
     {
-        $rule = new Rule($this->pool, array(1, 12), 'job1', null);
-        $rule2 = new Rule($this->pool, array(1), 'job1', null);
+        $rule = new GenericRule(array(1, 12), Rule::RULE_ROOT_REQUIRE, null);
+        $rule2 = new GenericRule(array(1), Rule::RULE_ROOT_REQUIRE, null);
 
         $this->assertFalse($rule->equals($rule2));
     }
 
     public function testEqualsForRulesWithSameLiterals()
     {
-        $rule = new Rule($this->pool, array(1, 12), 'job1', null);
-        $rule2 = new Rule($this->pool, array(1, 12), 'job1', null);
+        $rule = new GenericRule(array(1, 12), Rule::RULE_ROOT_REQUIRE, null);
+        $rule2 = new GenericRule(array(1, 12), Rule::RULE_ROOT_REQUIRE, null);
 
         $this->assertTrue($rule->equals($rule2));
     }
 
     public function testSetAndGetType()
     {
-        $rule = new Rule($this->pool, array(), 'job1', null);
-        $rule->setType('someType');
+        $rule = new GenericRule(array(), Rule::RULE_ROOT_REQUIRE, null);
+        $rule->setType(RuleSet::TYPE_REQUEST);
 
-        $this->assertEquals('someType', $rule->getType());
+        $this->assertEquals(RuleSet::TYPE_REQUEST, $rule->getType());
     }
 
     public function testEnable()
     {
-        $rule = new Rule($this->pool, array(), 'job1', null);
+        $rule = new GenericRule(array(), Rule::RULE_ROOT_REQUIRE, null);
         $rule->disable();
         $rule->enable();
 
@@ -85,7 +74,7 @@ class RuleTest extends TestCase
 
     public function testDisable()
     {
-        $rule = new Rule($this->pool, array(), 'job1', null);
+        $rule = new GenericRule(array(), Rule::RULE_ROOT_REQUIRE, null);
         $rule->enable();
         $rule->disable();
 
@@ -95,22 +84,28 @@ class RuleTest extends TestCase
 
     public function testIsAssertions()
     {
-        $rule = new Rule($this->pool, array(1, 12), 'job1', null);
-        $rule2 = new Rule($this->pool, array(1), 'job1', null);
+        $rule = new GenericRule(array(1, 12), Rule::RULE_ROOT_REQUIRE, null);
+        $rule2 = new GenericRule(array(1), Rule::RULE_ROOT_REQUIRE, null);
 
         $this->assertFalse($rule->isAssertion());
         $this->assertTrue($rule2->isAssertion());
     }
 
-    public function testToString()
+    public function testPrettyString()
     {
-        $repo = new ArrayRepository;
-        $repo->addPackage($p1 = $this->getPackage('foo', '2.1'));
-        $repo->addPackage($p2 = $this->getPackage('baz', '1.1'));
-        $this->pool->addRepository($repo);
+        $pool = new Pool(array(
+            $p1 = $this->getPackage('foo', '2.1'),
+            $p2 = $this->getPackage('baz', '1.1'),
+        ));
 
-        $rule = new Rule($this->pool, array($p1->getId(), -$p2->getId()), 'job1', null);
+        $repositorySetMock = $this->getMockBuilder('Composer\Repository\RepositorySet')->disableOriginalConstructor()->getMock();
+        $requestMock = $this->getMockBuilder('Composer\DependencyResolver\Request')->disableOriginalConstructor()->getMock();
 
-        $this->assertEquals('(-baz-1.1.0.0|+foo-2.1.0.0)', $rule->__toString());
+        $emptyConstraint = new MatchAllConstraint();
+        $emptyConstraint->setPrettyString('*');
+
+        $rule = new GenericRule(array($p1->getId(), -$p2->getId()), Rule::RULE_PACKAGE_REQUIRES, new Link('baz', 'foo', $emptyConstraint));
+
+        $this->assertEquals('baz 1.1 relates to foo * -> satisfiable by foo[2.1].', $rule->getPrettyString($repositorySetMock, $requestMock, $pool, false));
     }
 }

@@ -12,26 +12,29 @@
 
 namespace Composer\Test\DependencyResolver;
 
+use Composer\DependencyResolver\GenericRule;
 use Composer\DependencyResolver\Rule;
 use Composer\DependencyResolver\RuleSet;
 use Composer\DependencyResolver\RuleSetIterator;
 use Composer\DependencyResolver\Pool;
+use Composer\Test\TestCase;
 
-class RuleSetIteratorTest extends \PHPUnit_Framework_TestCase
+class RuleSetIteratorTest extends TestCase
 {
     protected $rules;
+    protected $pool;
 
     protected function setUp()
     {
-        $this->pool = new Pool;
+        $this->pool = new Pool();
 
         $this->rules = array(
-            RuleSet::TYPE_JOB => array(
-                new Rule($this->pool, array(), 'job1', null),
-                new Rule($this->pool, array(), 'job2', null),
+            RuleSet::TYPE_REQUEST => array(
+                new GenericRule(array(), Rule::RULE_ROOT_REQUIRE, null),
+                new GenericRule(array(), Rule::RULE_ROOT_REQUIRE, null),
             ),
             RuleSet::TYPE_LEARNED => array(
-                new Rule($this->pool, array(), 'update1', null),
+                new GenericRule(array(), Rule::RULE_LEARNED, null),
             ),
             RuleSet::TYPE_PACKAGE => array(),
         );
@@ -47,8 +50,8 @@ class RuleSetIteratorTest extends \PHPUnit_Framework_TestCase
         }
 
         $expected = array(
-            $this->rules[RuleSet::TYPE_JOB][0],
-            $this->rules[RuleSet::TYPE_JOB][1],
+            $this->rules[RuleSet::TYPE_REQUEST][0],
+            $this->rules[RuleSet::TYPE_REQUEST][1],
             $this->rules[RuleSet::TYPE_LEARNED][0],
         );
 
@@ -65,8 +68,8 @@ class RuleSetIteratorTest extends \PHPUnit_Framework_TestCase
         }
 
         $expected = array(
-            RuleSet::TYPE_JOB,
-            RuleSet::TYPE_JOB,
+            RuleSet::TYPE_REQUEST,
+            RuleSet::TYPE_REQUEST,
             RuleSet::TYPE_LEARNED,
         );
 

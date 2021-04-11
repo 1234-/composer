@@ -15,11 +15,29 @@ namespace Composer\Package;
 /**
  * @author Jordi Boggiano <j.boggiano@seld.be>
  */
-class RootAliasPackage extends AliasPackage implements RootPackageInterface
+class RootAliasPackage extends CompleteAliasPackage implements RootPackageInterface
 {
+    /** @var RootPackageInterface */
+    protected $aliasOf;
+
+    /**
+     * All descendants' constructors should call this parent constructor
+     *
+     * @param RootPackageInterface $aliasOf       The package this package is an alias of
+     * @param string                   $version       The version the alias must report
+     * @param string                   $prettyVersion The alias's non-normalized version
+     */
     public function __construct(RootPackageInterface $aliasOf, $version, $prettyVersion)
     {
         parent::__construct($aliasOf, $version, $prettyVersion);
+    }
+
+    /**
+     * @return RootPackageInterface
+     */
+    public function getAliasOf()
+    {
+        return $this->aliasOf;
     }
 
     /**
@@ -65,9 +83,19 @@ class RootAliasPackage extends AliasPackage implements RootPackageInterface
     /**
      * {@inheritDoc}
      */
+    public function getConfig()
+    {
+        return $this->aliasOf->getConfig();
+    }
+
+    /**
+     * {@inheritDoc}
+     */
     public function setRequires(array $require)
     {
-        return $this->aliasOf->setRequires($require);
+        $this->requires = $this->replaceSelfVersionDependencies($require, Link::TYPE_REQUIRE);
+
+        $this->aliasOf->setRequires($require);
     }
 
     /**
@@ -75,7 +103,76 @@ class RootAliasPackage extends AliasPackage implements RootPackageInterface
      */
     public function setDevRequires(array $devRequire)
     {
-        return $this->aliasOf->setDevRequires($devRequire);
+        $this->devRequires = $this->replaceSelfVersionDependencies($devRequire, Link::TYPE_DEV_REQUIRE);
+
+        $this->aliasOf->setDevRequires($devRequire);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function setConflicts(array $conflicts)
+    {
+        $this->conflicts = $this->replaceSelfVersionDependencies($conflicts, Link::TYPE_CONFLICT);
+        $this->aliasOf->setConflicts($conflicts);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function setProvides(array $provides)
+    {
+        $this->provides = $this->replaceSelfVersionDependencies($provides, Link::TYPE_PROVIDE);
+        $this->aliasOf->setProvides($provides);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function setReplaces(array $replaces)
+    {
+        $this->replaces = $this->replaceSelfVersionDependencies($replaces, Link::TYPE_REPLACE);
+        $this->aliasOf->setReplaces($replaces);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function setAutoload(array $autoload)
+    {
+        $this->aliasOf->setAutoload($autoload);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function setDevAutoload(array $devAutoload)
+    {
+        $this->aliasOf->setDevAutoload($devAutoload);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function setStabilityFlags(array $stabilityFlags)
+    {
+        $this->aliasOf->setStabilityFlags($stabilityFlags);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function setSuggests(array $suggests)
+    {
+        $this->aliasOf->setSuggests($suggests);
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function setExtra(array $extra)
+    {
+        $this->aliasOf->setExtra($extra);
     }
 
     public function __clone()

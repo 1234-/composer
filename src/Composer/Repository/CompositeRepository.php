@@ -39,6 +39,13 @@ class CompositeRepository implements RepositoryInterface
         }
     }
 
+    public function getRepoName()
+    {
+        return 'composite repo ('.implode(', ', array_map(function ($repo) {
+            return $repo->getRepoName();
+        }, $this->repositories)).')';
+    }
+
     /**
      * Returns all the wrapped repositories
      *
@@ -67,11 +74,11 @@ class CompositeRepository implements RepositoryInterface
     /**
      * {@inheritdoc}
      */
-    public function findPackage($name, $version)
+    public function findPackage($name, $constraint)
     {
         foreach ($this->repositories as $repository) {
             /* @var $repository RepositoryInterface */
-            $package = $repository->findPackage($name, $version);
+            $package = $repository->findPackage($name, $constraint);
             if (null !== $package) {
                 return $package;
             }
@@ -83,43 +90,49 @@ class CompositeRepository implements RepositoryInterface
     /**
      * {@inheritdoc}
      */
-    public function findPackages($name, $version = null)
+    public function findPackages($name, $constraint = null)
     {
         $packages = array();
         foreach ($this->repositories as $repository) {
             /* @var $repository RepositoryInterface */
-            $packages[] = $repository->findPackages($name, $version);
+            $packages[] = $repository->findPackages($name, $constraint);
         }
 
         return $packages ? call_user_func_array('array_merge', $packages) : array();
     }
 
     /**
+     * {@inheritDoc}
+     */
+    public function loadPackages(array $packageMap, array $acceptableStabilities, array $stabilityFlags, array $alreadyLoaded = array())
+    {
+        $packages = array();
+        $namesFound = array();
+        foreach ($this->repositories as $repository) {
+            /* @var $repository RepositoryInterface */
+            $result = $repository->loadPackages($packageMap, $acceptableStabilities, $stabilityFlags, $alreadyLoaded);
+            $packages[] = $result['packages'];
+            $namesFound[] = $result['namesFound'];
+        }
+
+        return array(
+            'packages' => $packages ? call_user_func_array('array_merge', $packages) : array(),
+            'namesFound' => $namesFound ? array_unique(call_user_func_array('array_merge', $namesFound)) : array(),
+        );
+    }
+
+    /**
      * {@inheritdoc}
      */
-    public function search($query, $mode = 0)
+    public function search($query, $mode = 0, $type = null)
     {
         $matches = array();
         foreach ($this->repositories as $repository) {
             /* @var $repository RepositoryInterface */
-            $matches[] = $repository->search($query, $mode);
+            $matches[] = $repository->search($query, $mode, $type);
         }
 
         return $matches ? call_user_func_array('array_merge', $matches) : array();
-    }
-
-    /**
-     * {@inheritDoc}
-     */
-    public function filterPackages($callback, $class = 'Composer\Package\Package')
-    {
-        foreach ($this->repositories as $repository) {
-            if (false === $repository->filterPackages($callback, $class)) {
-                return false;
-            }
-        }
-
-        return true;
     }
 
     /**
@@ -134,6 +147,20 @@ class CompositeRepository implements RepositoryInterface
         }
 
         return $packages ? call_user_func_array('array_merge', $packages) : array();
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function getProviders($packageName)
+    {
+        $results = array();
+        foreach ($this->repositories as $repository) {
+            /* @var $repository RepositoryInterface */
+            $results[] = $repository->getProviders($packageName);
+        }
+
+        return $results ? call_user_func_array('array_merge', $results) : array();
     }
 
     /**

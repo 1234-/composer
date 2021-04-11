@@ -18,14 +18,15 @@ use Symfony\Component\Console\Output\OutputInterface;
 /**
  * @author Jordi Boggiano <j.boggiano@seld.be>
  */
-class AboutCommand extends Command
+class AboutCommand extends BaseCommand
 {
     protected function configure()
     {
         $this
             ->setName('about')
-            ->setDescription('Short information about Composer')
-            ->setHelp(<<<EOT
+            ->setDescription('Shows the short information about Composer.')
+            ->setHelp(
+                <<<EOT
 <info>php composer.phar about</info>
 EOT
             )
@@ -34,11 +35,14 @@ EOT
 
     protected function execute(InputInterface $input, OutputInterface $output)
     {
-        $output->writeln(<<<EOT
-<info>Composer - Package Management for PHP</info>
+        $this->getIO()->write(
+            <<<EOT
+<info>Composer - Dependency Manager for PHP</info>
 <comment>Composer is a dependency manager tracking local dependencies of your projects and libraries.
-See http://getcomposer.org/ for more information.</comment>
+See https://getcomposer.org/ for more information.</comment>
 EOT
         );
+
+        return 0;
     }
 }

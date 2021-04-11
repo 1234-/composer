@@ -12,6 +12,7 @@
 
 namespace Composer\Test\Repository;
 
+use Composer\Test\TestCase;
 use Symfony\Component\Process\ExecutableFinder;
 use Composer\Package\Dumper\ArrayDumper;
 use Composer\Repository\VcsRepository;
@@ -23,7 +24,7 @@ use Composer\Config;
 /**
  * @group slow
  */
-class VcsRepositoryTest extends \PHPUnit_Framework_TestCase
+class VcsRepositoryTest extends TestCase
 {
     private static $composerHome;
     private static $gitRepo;
@@ -31,18 +32,19 @@ class VcsRepositoryTest extends \PHPUnit_Framework_TestCase
 
     protected function initialize()
     {
-        $oldCwd = getcwd();
-        self::$composerHome = sys_get_temp_dir() . '/composer-home-'.mt_rand().'/';
-        self::$gitRepo = sys_get_temp_dir() . '/composer-git-'.mt_rand().'/';
-
         $locator = new ExecutableFinder();
         if (!$locator->find('git')) {
             $this->skipped = 'This test needs a git binary in the PATH to be able to run';
 
             return;
         }
-        if (!@mkdir(self::$gitRepo) || !@chdir(self::$gitRepo)) {
-            $this->skipped = 'Could not create and move into the temp git repo '.self::$gitRepo;
+
+        $oldCwd = getcwd();
+        self::$composerHome = $this->getUniqueTmpDirectory();
+        self::$gitRepo = $this->getUniqueTmpDirectory();
+
+        if (!@chdir(self::$gitRepo)) {
+            $this->skipped = 'Could not move into the temp git repo '.self::$gitRepo;
 
             return;
         }
@@ -56,9 +58,11 @@ class VcsRepositoryTest extends \PHPUnit_Framework_TestCase
             }
         };
 
-        $exec('git init');
+        $exec('git init -q');
+        $exec('git checkout -b master');
         $exec('git config user.email composertest@example.org');
         $exec('git config user.name ComposerTest');
+        $exec('git config commit.gpgsign false');
         touch('foo');
         $exec('git add foo');
         $exec('git commit -m init');
@@ -141,6 +145,7 @@ class VcsRepositoryTest extends \PHPUnit_Framework_TestCase
             'dev-feature-b' => true,
             'dev-feature/a-1.0-B' => true,
             'dev-master' => true,
+            '9999999-dev' => true, // alias of dev-master
         );
 
         $config = new Config();
@@ -149,7 +154,8 @@ class VcsRepositoryTest extends \PHPUnit_Framework_TestCase
                 'home' => self::$composerHome,
             ),
         ));
-        $repo = new VcsRepository(array('url' => self::$gitRepo, 'type' => 'vcs'), new NullIO, $config);
+        $httpDownloader = $this->getMockBuilder('Composer\Util\HttpDownloader')->disableOriginalConstructor()->getMock();
+        $repo = new VcsRepository(array('url' => self::$gitRepo, 'type' => 'vcs'), new NullIO, $config, $httpDownloader);
         $packages = $repo->getPackages();
         $dumper = new ArrayDumper();
 

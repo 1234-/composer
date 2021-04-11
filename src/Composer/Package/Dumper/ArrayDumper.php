@@ -48,7 +48,9 @@ class ArrayDumper
         if ($package->getSourceType()) {
             $data['source']['type'] = $package->getSourceType();
             $data['source']['url'] = $package->getSourceUrl();
-            $data['source']['reference'] = $package->getSourceReference();
+            if (null !== ($value = $package->getSourceReference())) {
+                $data['source']['reference'] = $value;
+            }
             if ($mirrors = $package->getSourceMirrors()) {
                 $data['source']['mirrors'] = $mirrors;
             }
@@ -57,15 +59,15 @@ class ArrayDumper
         if ($package->getDistType()) {
             $data['dist']['type'] = $package->getDistType();
             $data['dist']['url'] = $package->getDistUrl();
-            $data['dist']['reference'] = $package->getDistReference();
-            $data['dist']['shasum'] = $package->getDistSha1Checksum();
+            if (null !== ($value = $package->getDistReference())) {
+                $data['dist']['reference'] = $value;
+            }
+            if (null !== ($value = $package->getDistSha1Checksum())) {
+                $data['dist']['shasum'] = $value;
+            }
             if ($mirrors = $package->getDistMirrors()) {
                 $data['dist']['mirrors'] = $mirrors;
             }
-        }
-
-        if ($package->getArchiveExcludes()) {
-            $data['archive']['exclude'] = $package->getArchiveExcludes();
         }
 
         foreach (BasePackage::$supportedLinkTypes as $type => $opts) {
@@ -83,12 +85,23 @@ class ArrayDumper
         }
 
         if ($package->getReleaseDate()) {
-            $data['time'] = $package->getReleaseDate()->format('Y-m-d H:i:s');
+            $data['time'] = $package->getReleaseDate()->format(DATE_RFC3339);
+        }
+
+        if ($package->isDefaultBranch()) {
+            $data['default-branch'] = true;
         }
 
         $data = $this->dumpValues($package, $keys, $data);
 
         if ($package instanceof CompletePackageInterface) {
+            if ($package->getArchiveName()) {
+                $data['archive']['name'] = $package->getArchiveName();
+            }
+            if ($package->getArchiveExcludes()) {
+                $data['archive']['exclude'] = $package->getArchiveExcludes();
+            }
+
             $keys = array(
                 'scripts',
                 'license',
@@ -98,11 +111,12 @@ class ArrayDumper
                 'keywords',
                 'repositories',
                 'support',
+                'funding',
             );
 
             $data = $this->dumpValues($package, $keys, $data);
 
-            if (isset($data['keywords']) && is_array($data['keywords'])) {
+            if (isset($data['keywords']) && \is_array($data['keywords'])) {
                 sort($data['keywords']);
             }
 
@@ -118,7 +132,7 @@ class ArrayDumper
             }
         }
 
-        if (count($package->getTransportOptions()) > 0) {
+        if (\count($package->getTransportOptions()) > 0) {
             $data['transport-options'] = $package->getTransportOptions();
         }
 
@@ -133,9 +147,9 @@ class ArrayDumper
             }
 
             $getter = 'get'.ucfirst($method);
-            $value  = $package->$getter();
+            $value = $package->$getter();
 
-            if (null !== $value && !(is_array($value) && 0 === count($value))) {
+            if (null !== $value && !(\is_array($value) && 0 === \count($value))) {
                 $data[$key] = $value;
             }
         }

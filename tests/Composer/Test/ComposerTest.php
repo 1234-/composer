@@ -13,14 +13,13 @@
 namespace Composer\Test;
 
 use Composer\Composer;
-use Composer\TestCase;
 
 class ComposerTest extends TestCase
 {
     public function testSetGetPackage()
     {
         $composer = new Composer();
-        $package = $this->getMock('Composer\Package\RootPackageInterface');
+        $package = $this->getMockBuilder('Composer\Package\RootPackageInterface')->getMock();
         $composer->setPackage($package);
 
         $this->assertSame($package, $composer->getPackage());
@@ -47,8 +46,8 @@ class ComposerTest extends TestCase
     public function testSetGetDownloadManager()
     {
         $composer = new Composer();
-        $io = $this->getMock('Composer\IO\IOInterface');
-        $manager = $this->getMock('Composer\Downloader\DownloadManager', array(), array($io));
+        $io = $this->getMockBuilder('Composer\IO\IOInterface')->getMock();
+        $manager = $this->getMockBuilder('Composer\Downloader\DownloadManager')->setConstructorArgs(array($io))->getMock();
         $composer->setDownloadManager($manager);
 
         $this->assertSame($manager, $composer->getDownloadManager());
@@ -57,7 +56,7 @@ class ComposerTest extends TestCase
     public function testSetGetInstallationManager()
     {
         $composer = new Composer();
-        $manager = $this->getMock('Composer\Installer\InstallationManager');
+        $manager = $this->getMockBuilder('Composer\Installer\InstallationManager')->disableOriginalConstructor()->getMock();
         $composer->setInstallationManager($manager);
 
         $this->assertSame($manager, $composer->getInstallationManager());

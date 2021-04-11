@@ -14,6 +14,7 @@ namespace Composer\Downloader;
 
 use Composer\Package\PackageInterface;
 use Composer\Util\ProcessExecutor;
+use Composer\Util\Hg as HgUtils;
 
 /**
  * @author Per Bernhardt <plb@webfactory.de>
@@ -23,38 +24,58 @@ class HgDownloader extends VcsDownloader
     /**
      * {@inheritDoc}
      */
-    public function doDownload(PackageInterface $package, $path, $url)
+    protected function doDownload(PackageInterface $package, $path, $url, PackageInterface $prevPackage = null)
     {
-        $url = ProcessExecutor::escape($url);
-        $ref = ProcessExecutor::escape($package->getSourceReference());
-        $this->io->write("    Cloning ".$package->getSourceReference());
-        $command = sprintf('hg clone %s %s', $url, ProcessExecutor::escape($path));
-        if (0 !== $this->process->execute($command, $ignoredOutput)) {
-            throw new \RuntimeException('Failed to execute ' . $command . "\n\n" . $this->process->getErrorOutput());
+        if (null === HgUtils::getVersion($this->process)) {
+            throw new \RuntimeException('hg was not found in your PATH, skipping source download');
         }
-        $command = sprintf('hg up %s', $ref);
-        if (0 !== $this->process->execute($command, $ignoredOutput, realpath($path))) {
-            throw new \RuntimeException('Failed to execute ' . $command . "\n\n" . $this->process->getErrorOutput());
-        }
+
+        return \React\Promise\resolve();
     }
 
     /**
      * {@inheritDoc}
      */
-    public function doUpdate(PackageInterface $initial, PackageInterface $target, $path, $url)
+    protected function doInstall(PackageInterface $package, $path, $url)
     {
-        $url = ProcessExecutor::escape($url);
-        $ref = ProcessExecutor::escape($target->getSourceReference());
-        $this->io->write("    Updating to ".$target->getSourceReference());
+        $hgUtils = new HgUtils($this->io, $this->config, $this->process);
 
-        if (!is_dir($path.'/.hg')) {
-            throw new \RuntimeException('The .hg directory is missing from '.$path.', see http://getcomposer.org/commit-deps for more information');
-        }
+        $cloneCommand = function ($url) use ($path) {
+            return sprintf('hg clone %s %s', ProcessExecutor::escape($url), ProcessExecutor::escape($path));
+        };
 
-        $command = sprintf('hg pull %s && hg up %s', $url, $ref);
+        $hgUtils->runCommand($cloneCommand, $url, $path);
+
+        $ref = ProcessExecutor::escape($package->getSourceReference());
+        $command = sprintf('hg up %s', $ref);
         if (0 !== $this->process->execute($command, $ignoredOutput, realpath($path))) {
             throw new \RuntimeException('Failed to execute ' . $command . "\n\n" . $this->process->getErrorOutput());
         }
+
+        return \React\Promise\resolve();
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    protected function doUpdate(PackageInterface $initial, PackageInterface $target, $path, $url)
+    {
+        $hgUtils = new HgUtils($this->io, $this->config, $this->process);
+
+        $ref = $target->getSourceReference();
+        $this->io->writeError(" Updating to ".$target->getSourceReference());
+
+        if (!$this->hasMetadataRepository($path)) {
+            throw new \RuntimeException('The .hg directory is missing from '.$path.', see https://getcomposer.org/commit-deps for more information');
+        }
+
+        $command = function ($url) use ($ref) {
+            return sprintf('hg pull %s && hg up %s', ProcessExecutor::escape($url), ProcessExecutor::escape($ref));
+        };
+
+        $hgUtils->runCommand($command, $url, $path);
+
+        return \React\Promise\resolve();
     }
 
     /**
@@ -63,7 +84,7 @@ class HgDownloader extends VcsDownloader
     public function getLocalChanges(PackageInterface $package, $path)
     {
         if (!is_dir($path.'/.hg')) {
-            return;
+            return null;
         }
 
         $this->process->execute('hg st', $output, realpath($path));
@@ -76,12 +97,20 @@ class HgDownloader extends VcsDownloader
      */
     protected function getCommitLogs($fromReference, $toReference, $path)
     {
-        $command = sprintf('hg log -r %s:%s --style compact', $fromReference, $toReference);
+        $command = sprintf('hg log -r %s:%s --style compact', ProcessExecutor::escape($fromReference), ProcessExecutor::escape($toReference));
 
         if (0 !== $this->process->execute($command, $output, realpath($path))) {
             throw new \RuntimeException('Failed to execute ' . $command . "\n\n" . $this->process->getErrorOutput());
         }
 
         return $output;
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    protected function hasMetadataRepository($path)
+    {
+        return is_dir($path . '/.hg');
     }
 }

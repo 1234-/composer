@@ -13,44 +13,61 @@
 namespace Composer\Test\Downloader;
 
 use Composer\Downloader\HgDownloader;
+use Composer\Test\TestCase;
 use Composer\Util\Filesystem;
+use Composer\Util\Platform;
 
-class HgDownloaderTest extends \PHPUnit_Framework_TestCase
+class HgDownloaderTest extends TestCase
 {
+    /** @var string */
+    private $workingDir;
+
+    protected function setUp()
+    {
+        $this->workingDir = $this->getUniqueTmpDirectory();
+    }
+
+    protected function tearDown()
+    {
+        if (is_dir($this->workingDir)) {
+            $fs = new Filesystem;
+            $fs->removeDirectory($this->workingDir);
+        }
+    }
+
     protected function getDownloaderMock($io = null, $config = null, $executor = null, $filesystem = null)
     {
-        $io = $io ?: $this->getMock('Composer\IO\IOInterface');
-        $config = $config ?: $this->getMock('Composer\Config');
-        $executor = $executor ?: $this->getMock('Composer\Util\ProcessExecutor');
-        $filesystem = $filesystem ?: $this->getMock('Composer\Util\Filesystem');
+        $io = $io ?: $this->getMockBuilder('Composer\IO\IOInterface')->getMock();
+        $config = $config ?: $this->getMockBuilder('Composer\Config')->getMock();
+        $executor = $executor ?: $this->getMockBuilder('Composer\Util\ProcessExecutor')->getMock();
+        $filesystem = $filesystem ?: $this->getMockBuilder('Composer\Util\Filesystem')->getMock();
 
         return new HgDownloader($io, $config, $executor, $filesystem);
     }
 
-    /**
-     * @expectedException \InvalidArgumentException
-     */
     public function testDownloadForPackageWithoutSourceReference()
     {
-        $packageMock = $this->getMock('Composer\Package\PackageInterface');
+        $packageMock = $this->getMockBuilder('Composer\Package\PackageInterface')->getMock();
         $packageMock->expects($this->once())
             ->method('getSourceReference')
             ->will($this->returnValue(null));
 
+        $this->setExpectedException('InvalidArgumentException');
+
         $downloader = $this->getDownloaderMock();
-        $downloader->download($packageMock, '/path');
+        $downloader->install($packageMock, '/path');
     }
 
     public function testDownload()
     {
-        $packageMock = $this->getMock('Composer\Package\PackageInterface');
+        $packageMock = $this->getMockBuilder('Composer\Package\PackageInterface')->getMock();
         $packageMock->expects($this->any())
             ->method('getSourceReference')
             ->will($this->returnValue('ref'));
         $packageMock->expects($this->once())
             ->method('getSourceUrls')
             ->will($this->returnValue(array('https://mercurial.dev/l3l0/composer')));
-        $processExecutor = $this->getMock('Composer\Util\ProcessExecutor');
+        $processExecutor = $this->getMockBuilder('Composer\Util\ProcessExecutor')->getMock();
 
         $expectedGitCommand = $this->getCmd('hg clone \'https://mercurial.dev/l3l0/composer\' \'composerPath\'');
         $processExecutor->expects($this->at(0))
@@ -65,37 +82,40 @@ class HgDownloaderTest extends \PHPUnit_Framework_TestCase
             ->will($this->returnValue(0));
 
         $downloader = $this->getDownloaderMock(null, null, $processExecutor);
-        $downloader->download($packageMock, 'composerPath');
+        $downloader->install($packageMock, 'composerPath');
     }
 
-    /**
-     * @expectedException \InvalidArgumentException
-     */
     public function testUpdateforPackageWithoutSourceReference()
     {
-        $initialPackageMock = $this->getMock('Composer\Package\PackageInterface');
-        $sourcePackageMock = $this->getMock('Composer\Package\PackageInterface');
+        $initialPackageMock = $this->getMockBuilder('Composer\Package\PackageInterface')->getMock();
+        $sourcePackageMock = $this->getMockBuilder('Composer\Package\PackageInterface')->getMock();
         $sourcePackageMock->expects($this->once())
             ->method('getSourceReference')
             ->will($this->returnValue(null));
 
+        $this->setExpectedException('InvalidArgumentException');
+
         $downloader = $this->getDownloaderMock();
+        $downloader->prepare('update', $sourcePackageMock, '/path', $initialPackageMock);
         $downloader->update($initialPackageMock, $sourcePackageMock, '/path');
+        $downloader->cleanup('update', $sourcePackageMock, '/path', $initialPackageMock);
     }
 
     public function testUpdate()
     {
-        $tmpDir = realpath(sys_get_temp_dir()).DIRECTORY_SEPARATOR.'cmptest-'.md5(uniqid('', true));
         $fs = new Filesystem;
-        $fs->ensureDirectoryExists($tmpDir.'/.hg');
-        $packageMock = $this->getMock('Composer\Package\PackageInterface');
+        $fs->ensureDirectoryExists($this->workingDir.'/.hg');
+        $packageMock = $this->getMockBuilder('Composer\Package\PackageInterface')->getMock();
         $packageMock->expects($this->any())
             ->method('getSourceReference')
             ->will($this->returnValue('ref'));
         $packageMock->expects($this->any())
+            ->method('getVersion')
+            ->will($this->returnValue('1.0.0.0'));
+        $packageMock->expects($this->any())
             ->method('getSourceUrls')
             ->will($this->returnValue(array('https://github.com/l3l0/composer')));
-        $processExecutor = $this->getMock('Composer\Util\ProcessExecutor');
+        $processExecutor = $this->getMockBuilder('Composer\Util\ProcessExecutor')->getMock();
 
         $expectedHgCommand = $this->getCmd("hg st");
         $processExecutor->expects($this->at(0))
@@ -109,26 +129,30 @@ class HgDownloaderTest extends \PHPUnit_Framework_TestCase
             ->will($this->returnValue(0));
 
         $downloader = $this->getDownloaderMock(null, null, $processExecutor);
-        $downloader->update($packageMock, $packageMock, $tmpDir);
+        $downloader->prepare('update', $packageMock, $this->workingDir, $packageMock);
+        $downloader->update($packageMock, $packageMock, $this->workingDir);
+        $downloader->cleanup('update', $packageMock, $this->workingDir, $packageMock);
     }
 
     public function testRemove()
     {
         $expectedResetCommand = $this->getCmd('cd \'composerPath\' && hg st');
 
-        $packageMock = $this->getMock('Composer\Package\PackageInterface');
-        $processExecutor = $this->getMock('Composer\Util\ProcessExecutor');
+        $packageMock = $this->getMockBuilder('Composer\Package\PackageInterface')->getMock();
+        $processExecutor = $this->getMockBuilder('Composer\Util\ProcessExecutor')->getMock();
         $processExecutor->expects($this->any())
             ->method('execute')
             ->with($this->equalTo($expectedResetCommand));
-        $filesystem = $this->getMock('Composer\Util\Filesystem');
-        $filesystem->expects($this->any())
-            ->method('removeDirectory')
+        $filesystem = $this->getMockBuilder('Composer\Util\Filesystem')->getMock();
+        $filesystem->expects($this->once())
+            ->method('removeDirectoryAsync')
             ->with($this->equalTo('composerPath'))
-            ->will($this->returnValue(true));
+            ->will($this->returnValue(\React\Promise\resolve(true)));
 
         $downloader = $this->getDownloaderMock(null, null, $processExecutor, $filesystem);
+        $downloader->prepare('uninstall', $packageMock, 'composerPath');
         $downloader->remove($packageMock, 'composerPath');
+        $downloader->cleanup('uninstall', $packageMock, 'composerPath');
     }
 
     public function testGetInstallationSource()
@@ -140,10 +164,6 @@ class HgDownloaderTest extends \PHPUnit_Framework_TestCase
 
     private function getCmd($cmd)
     {
-        if (defined('PHP_WINDOWS_VERSION_BUILD')) {
-            return strtr($cmd, "'", '"');
-        }
-
-        return $cmd;
+        return Platform::isWindows() ? strtr($cmd, "'", '"') : $cmd;
     }
 }

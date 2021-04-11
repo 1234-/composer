@@ -10,15 +10,23 @@
  * file that was distributed with this source code.
  */
 
-namespace Composer\Repository;
+namespace Composer\Test\Repository;
 
-use Composer\TestCase;
+use Composer\Repository\ArtifactRepository;
+use Composer\Test\TestCase;
 use Composer\IO\NullIO;
-use Composer\Config;
 use Composer\Package\BasePackage;
 
 class ArtifactRepositoryTest extends TestCase
 {
+    public function setUp()
+    {
+        parent::setUp();
+        if (!extension_loaded('zip')) {
+            $this->markTestSkipped('You need the zip extension to run this test.');
+        }
+    }
+
     public function testExtractsConfigsFromZipArchives()
     {
         $expectedPackages = array(
@@ -27,13 +35,14 @@ class ArtifactRepositoryTest extends TestCase
             'vendor1/package2-4.3.2',
             'vendor3/package1-5.4.3',
             'test/jsonInRoot-1.0.0',
+            'test/jsonInRootTarFile-1.0.0',
             'test/jsonInFirstLevel-1.0.0',
             //The files not-an-artifact.zip and jsonSecondLevel are not valid
             //artifacts and do not get detected.
         );
 
         $coordinates = array('type' => 'artifact', 'url' => __DIR__ . '/Fixtures/artifacts');
-        $repo = new ArtifactRepository($coordinates, new NullIO(), new Config());
+        $repo = new ArtifactRepository($coordinates, new NullIO());
 
         $foundPackages = array_map(function (BasePackage $package) {
             return "{$package->getPrettyName()}-{$package->getPrettyVersion()}";
@@ -43,16 +52,23 @@ class ArtifactRepositoryTest extends TestCase
         sort($foundPackages);
 
         $this->assertSame($expectedPackages, $foundPackages);
+
+        $tarPackage = array_filter($repo->getPackages(), function (BasePackage $package) {
+            return $package->getPrettyName() === 'test/jsonInRootTarFile';
+        });
+        $this->assertCount(1, $tarPackage);
+        $tarPackage = array_pop($tarPackage);
+        $this->assertSame('tar', $tarPackage->getDistType());
     }
 
     public function testAbsoluteRepoUrlCreatesAbsoluteUrlPackages()
     {
         $absolutePath = __DIR__ . '/Fixtures/artifacts';
         $coordinates = array('type' => 'artifact', 'url' => $absolutePath);
-        $repo = new ArtifactRepository($coordinates, new NullIO(), new Config());
+        $repo = new ArtifactRepository($coordinates, new NullIO());
 
         foreach ($repo->getPackages() as $package) {
-            $this->assertTrue(strpos($package->getDistUrl(), $absolutePath) === 0);
+            $this->assertSame(strpos($package->getDistUrl(), strtr($absolutePath, '\\', '/')), 0);
         }
     }
 
@@ -60,10 +76,10 @@ class ArtifactRepositoryTest extends TestCase
     {
         $relativePath = 'tests/Composer/Test/Repository/Fixtures/artifacts';
         $coordinates = array('type' => 'artifact', 'url' => $relativePath);
-        $repo = new ArtifactRepository($coordinates, new NullIO(), new Config());
+        $repo = new ArtifactRepository($coordinates, new NullIO());
 
         foreach ($repo->getPackages() as $package) {
-            $this->assertTrue(strpos($package->getDistUrl(), $relativePath) === 0);
+            $this->assertSame(strpos($package->getDistUrl(), $relativePath), 0);
         }
     }
 }

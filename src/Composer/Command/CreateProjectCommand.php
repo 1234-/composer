@@ -16,17 +16,19 @@ use Composer\Config;
 use Composer\Factory;
 use Composer\Installer;
 use Composer\Installer\ProjectInstaller;
-use Composer\Installer\InstallationManager;
+use Composer\Installer\SuggestedPackagesReporter;
 use Composer\IO\IOInterface;
 use Composer\Package\BasePackage;
-use Composer\DependencyResolver\Pool;
 use Composer\DependencyResolver\Operation\InstallOperation;
 use Composer\Package\Version\VersionSelector;
-use Composer\Repository\ComposerRepository;
+use Composer\Package\AliasPackage;
+use Composer\Repository\RepositoryFactory;
 use Composer\Repository\CompositeRepository;
-use Composer\Repository\FilesystemRepository;
+use Composer\Repository\PlatformRepository;
 use Composer\Repository\InstalledFilesystemRepository;
+use Composer\Repository\RepositorySet;
 use Composer\Script\ScriptEvents;
+use Composer\Util\Silencer;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
@@ -35,7 +37,7 @@ use Symfony\Component\Finder\Finder;
 use Composer\Json\JsonFile;
 use Composer\Config\JsonConfigSource;
 use Composer\Util\Filesystem;
-use Composer\Util\RemoteFilesystem;
+use Composer\Util\ProcessExecutor;
 use Composer\Package\Version\VersionParser;
 
 /**
@@ -46,31 +48,44 @@ use Composer\Package\Version\VersionParser;
  * @author Tobias Munk <schmunk@usrbin.de>
  * @author Nils Adermann <naderman@naderman.de>
  */
-class CreateProjectCommand extends Command
+class CreateProjectCommand extends BaseCommand
 {
+    /**
+     * @var SuggestedPackagesReporter
+     */
+    protected $suggestedPackagesReporter;
+
     protected function configure()
     {
         $this
             ->setName('create-project')
-            ->setDescription('Create new project from a package into given directory.')
+            ->setDescription('Creates new project from a package into given directory.')
             ->setDefinition(array(
                 new InputArgument('package', InputArgument::OPTIONAL, 'Package name to be installed'),
                 new InputArgument('directory', InputArgument::OPTIONAL, 'Directory where the files should be created'),
                 new InputArgument('version', InputArgument::OPTIONAL, 'Version, will default to latest'),
                 new InputOption('stability', 's', InputOption::VALUE_REQUIRED, 'Minimum-stability allowed (unless a version is specified).'),
                 new InputOption('prefer-source', null, InputOption::VALUE_NONE, 'Forces installation from package sources when possible, including VCS information.'),
-                new InputOption('prefer-dist', null, InputOption::VALUE_NONE, 'Forces installation from package dist even for dev versions.'),
-                new InputOption('repository-url', null, InputOption::VALUE_REQUIRED, 'Pick a different repository url to look for the package.'),
+                new InputOption('prefer-dist', null, InputOption::VALUE_NONE, 'Forces installation from package dist (default behavior).'),
+                new InputOption('prefer-install', null, InputOption::VALUE_REQUIRED, 'Forces installation from package dist|source|auto (auto chooses source for dev versions, dist for the rest).'),
+                new InputOption('repository', null, InputOption::VALUE_REQUIRED | InputOption::VALUE_IS_ARRAY, 'Add custom repositories to look the package up, either by URL or using JSON arrays'),
+                new InputOption('repository-url', null, InputOption::VALUE_REQUIRED, 'DEPRECATED: Use --repository instead.'),
+                new InputOption('add-repository', null, InputOption::VALUE_NONE, 'Add the custom repository in the composer.json. If a lock file is present it will be deleted and an update will be run instead of install.'),
                 new InputOption('dev', null, InputOption::VALUE_NONE, 'Enables installation of require-dev packages (enabled by default, only present for BC).'),
                 new InputOption('no-dev', null, InputOption::VALUE_NONE, 'Disables installation of require-dev packages.'),
-                new InputOption('no-plugins', null, InputOption::VALUE_NONE, 'Whether to disable plugins.'),
                 new InputOption('no-custom-installers', null, InputOption::VALUE_NONE, 'DEPRECATED: Use no-plugins instead.'),
                 new InputOption('no-scripts', null, InputOption::VALUE_NONE, 'Whether to prevent execution of all defined scripts in the root package.'),
                 new InputOption('no-progress', null, InputOption::VALUE_NONE, 'Do not output download progress.'),
-                new InputOption('keep-vcs', null, InputOption::VALUE_NONE, 'Whether to prevent deletion vcs folder.'),
+                new InputOption('no-secure-http', null, InputOption::VALUE_NONE, 'Disable the secure-http config option temporarily while installing the root package. Use at your own risk. Using this flag is a bad idea.'),
+                new InputOption('keep-vcs', null, InputOption::VALUE_NONE, 'Whether to prevent deleting the vcs folder.'),
+                new InputOption('remove-vcs', null, InputOption::VALUE_NONE, 'Whether to force deletion of the vcs folder without prompting.'),
                 new InputOption('no-install', null, InputOption::VALUE_NONE, 'Whether to skip installation of the package dependencies.'),
+                new InputOption('ignore-platform-req', null, InputOption::VALUE_REQUIRED | InputOption::VALUE_IS_ARRAY, 'Ignore a specific platform requirement (php & ext- packages).'),
+                new InputOption('ignore-platform-reqs', null, InputOption::VALUE_NONE, 'Ignore all platform requirements (php & ext- packages).'),
+                new InputOption('ask', null, InputOption::VALUE_NONE, 'Whether to ask for project directory.'),
             ))
-            ->setHelp(<<<EOT
+            ->setHelp(
+                <<<EOT
 The <info>create-project</info> command creates a new project from a given
 package into a new directory. If executed without params and in a directory
 with a composer.json file it installs the packages for the current project.
@@ -82,6 +97,8 @@ version-controlled installation for developers of your project.
 
 You can also specify the version with the package name using = or : as separator.
 
+<info>php composer.phar create-project vendor/project:version target-directory</info>
+
 To install unstable packages, either specify the version you want, or use the
 --stability=dev (where dev can be one of RC, beta, alpha or dev).
 
@@ -89,8 +106,9 @@ To setup a developer workable version you should create the project using the so
 controlled code by appending the <info>'--prefer-source'</info> flag.
 
 To install a package from another repository than the default one you
-can pass the <info>'--repository-url=http://myrepository.org'</info> flag.
+can pass the <info>'--repository=https://myrepository.org'</info> flag.
 
+Read more at https://getcomposer.org/doc/03-cli.md#create-project
 EOT
             )
         ;
@@ -99,19 +117,29 @@ EOT
     protected function execute(InputInterface $input, OutputInterface $output)
     {
         $config = Factory::createConfig();
+        $io = $this->getIO();
 
-        $preferSource = false;
-        $preferDist = false;
-        $this->updatePreferredOptions($config, $input, $preferSource, $preferDist);
+        list($preferSource, $preferDist) = $this->getPreferredInstallOptions($config, $input, true);
 
+        if ($input->getOption('dev')) {
+            $io->writeError('<warning>You are using the deprecated option "dev". Dev packages are installed by default now.</warning>');
+        }
         if ($input->getOption('no-custom-installers')) {
-            $output->writeln('<warning>You are using the deprecated option "no-custom-installers". Use "no-plugins" instead.</warning>');
+            $io->writeError('<warning>You are using the deprecated option "no-custom-installers". Use "no-plugins" instead.</warning>');
             $input->setOption('no-plugins', true);
         }
 
+        if ($input->isInteractive() && $input->getOption('ask')) {
+            $parts = explode("/", strtolower($input->getArgument('package')), 2);
+            $input->setArgument('directory', $io->ask('New project directory [<comment>'.array_pop($parts).'</comment>]: '));
+        }
+
+        $ignorePlatformReqs = $input->getOption('ignore-platform-reqs') ?: ($input->getOption('ignore-platform-req') ?: false);
+
         return $this->installProject(
-            $this->getIO(),
+            $io,
             $config,
+            $input,
             $input->getArgument('package'),
             $input->getArgument('directory'),
             $input->getArgument('version'),
@@ -119,47 +147,93 @@ EOT
             $preferSource,
             $preferDist,
             !$input->getOption('no-dev'),
-            $input->getOption('repository-url'),
+            $input->getOption('repository') ?: $input->getOption('repository-url'),
             $input->getOption('no-plugins'),
             $input->getOption('no-scripts'),
-            $input->getOption('keep-vcs'),
             $input->getOption('no-progress'),
             $input->getOption('no-install'),
-            $input
+            $ignorePlatformReqs,
+            !$input->getOption('no-secure-http'),
+            $input->getOption('add-repository')
         );
     }
 
-    public function installProject(IOInterface $io, Config $config, $packageName, $directory = null, $packageVersion = null, $stability = 'stable', $preferSource = false, $preferDist = false, $installDevPackages = false, $repositoryUrl = null, $disablePlugins = false, $noScripts = false, $keepVcs = false, $noProgress = false, $noInstall = false, InputInterface $input)
+    public function installProject(IOInterface $io, Config $config, InputInterface $input, $packageName, $directory = null, $packageVersion = null, $stability = 'stable', $preferSource = false, $preferDist = false, $installDevPackages = false, $repositories = null, $disablePlugins = false, $noScripts = false, $noProgress = false, $noInstall = false, $ignorePlatformReqs = false, $secureHttp = true, $addRepository = false)
     {
         $oldCwd = getcwd();
+
+        if ($repositories !== null && !is_array($repositories)) {
+            $repositories = (array) $repositories;
+        }
 
         // we need to manually load the configuration to pass the auth credentials to the io interface!
         $io->loadConfiguration($config);
 
+        $this->suggestedPackagesReporter = new SuggestedPackagesReporter($io);
+
         if ($packageName !== null) {
-            $installedFromVcs = $this->installRootPackage($io, $config, $packageName, $directory, $packageVersion, $stability, $preferSource, $preferDist, $installDevPackages, $repositoryUrl, $disablePlugins, $noScripts, $keepVcs, $noProgress);
+            $installedFromVcs = $this->installRootPackage($io, $config, $packageName, $directory, $packageVersion, $stability, $preferSource, $preferDist, $installDevPackages, $repositories, $disablePlugins, $noScripts, $noProgress, $ignorePlatformReqs, $secureHttp);
         } else {
             $installedFromVcs = false;
         }
 
+        if ($repositories !== null && $addRepository && is_file('composer.lock')) {
+            unlink('composer.lock');
+        }
+
         $composer = Factory::create($io, null, $disablePlugins);
-        $fs = new Filesystem();
+
+        // add the repository to the composer.json and use it for the install run later
+        if ($repositories !== null && $addRepository) {
+            foreach ($repositories as $index => $repo) {
+                $repoConfig = RepositoryFactory::configFromString($io, $composer->getConfig(), $repo, true);
+                $composerJsonRepositoriesConfig = $composer->getConfig()->getRepositories();
+                $name = RepositoryFactory::generateRepositoryName($index, $repoConfig, $composerJsonRepositoriesConfig);
+                $configSource = new JsonConfigSource(new JsonFile('composer.json'));
+
+                if (
+                    (isset($repoConfig['packagist']) && $repoConfig === array('packagist' => false))
+                    || (isset($repoConfig['packagist.org']) && $repoConfig === array('packagist.org' => false))
+                ) {
+                    $configSource->addRepository('packagist.org', false);
+                } else {
+                    $configSource->addRepository($name, $repoConfig, false);
+                }
+
+                $composer = Factory::create($io, null, $disablePlugins);
+            }
+        }
+
+        $process = new ProcessExecutor($io);
+        $fs = new Filesystem($process);
 
         if ($noScripts === false) {
             // dispatch event
-            $composer->getEventDispatcher()->dispatchCommandEvent(ScriptEvents::POST_ROOT_PACKAGE_INSTALL, $installDevPackages);
+            $composer->getEventDispatcher()->dispatchScript(ScriptEvents::POST_ROOT_PACKAGE_INSTALL, $installDevPackages);
         }
 
-        $rootPackageConfig = $composer->getConfig();
-        $this->updatePreferredOptions($rootPackageConfig, $input, $preferSource, $preferDist);
+        // use the new config including the newly installed project
+        $config = $composer->getConfig();
+        list($preferSource, $preferDist) = $this->getPreferredInstallOptions($config, $input);
 
         // install dependencies of the created project
         if ($noInstall === false) {
+            $composer->getInstallationManager()->setOutputProgress(!$noProgress);
+
             $installer = Installer::create($io, $composer);
             $installer->setPreferSource($preferSource)
                 ->setPreferDist($preferDist)
                 ->setDevMode($installDevPackages)
-                ->setRunScripts( ! $noScripts);
+                ->setRunScripts(!$noScripts)
+                ->setIgnorePlatformRequirements($ignorePlatformReqs)
+                ->setSuggestedPackagesReporter($this->suggestedPackagesReporter)
+                ->setOptimizeAutoloader($config->get('optimize-autoloader'))
+                ->setClassMapAuthoritative($config->get('classmap-authoritative'))
+                ->setApcuAutoloader($config->get('apcu-autoloader'));
+
+            if (!$composer->getLocker()->isLocked()) {
+                $installer->setUpdate(true);
+            }
 
             if ($disablePlugins) {
                 $installer->disablePlugins();
@@ -172,15 +246,18 @@ EOT
         }
 
         $hasVcs = $installedFromVcs;
-        if (!$keepVcs && $installedFromVcs
+        if (
+            !$input->getOption('keep-vcs')
+            && $installedFromVcs
             && (
-                !$io->isInteractive()
-                || $io->askConfirmation('<info>Do you want to remove the existing VCS (.git, .svn..) history?</info> [<comment>Y,n</comment>]? ', true)
+                $input->getOption('remove-vcs')
+                || !$io->isInteractive()
+                || $io->askConfirmation('<info>Do you want to remove the existing VCS (.git, .svn..) history?</info> [<comment>Y,n</comment>]? ')
             )
         ) {
             $finder = new Finder();
             $finder->depth(0)->directories()->in(getcwd())->ignoreVCS(false)->ignoreDotFiles(false);
-            foreach (array('.svn', '_svn', 'CVS', '_darcs', '.arch-params', '.monotone', '.bzr', '.git', '.hg') as $vcsName) {
+            foreach (array('.svn', '_svn', 'CVS', '_darcs', '.arch-params', '.monotone', '.bzr', '.git', '.hg', '.fslckout', '_FOSSIL_') as $vcsName) {
                 $finder->name($vcsName);
             }
 
@@ -193,7 +270,7 @@ EOT
                     }
                 }
             } catch (\Exception $e) {
-                $io->write('<error>An error occurred while removing the VCS metadata: '.$e->getMessage().'</error>');
+                $io->writeError('<error>An error occurred while removing the VCS metadata: '.$e->getMessage().'</error>');
             }
 
             $hasVcs = false;
@@ -214,32 +291,26 @@ EOT
 
         if ($noScripts === false) {
             // dispatch event
-            $composer->getEventDispatcher()->dispatchCommandEvent(ScriptEvents::POST_CREATE_PROJECT_CMD, $installDevPackages);
+            $composer->getEventDispatcher()->dispatchScript(ScriptEvents::POST_CREATE_PROJECT_CMD, $installDevPackages);
         }
 
         chdir($oldCwd);
-        $vendorComposerDir = $composer->getConfig()->get('vendor-dir').'/composer';
+        $vendorComposerDir = $config->get('vendor-dir').'/composer';
         if (is_dir($vendorComposerDir) && $fs->isDirEmpty($vendorComposerDir)) {
-            @rmdir($vendorComposerDir);
-            $vendorDir = $composer->getConfig()->get('vendor-dir');
+            Silencer::call('rmdir', $vendorComposerDir);
+            $vendorDir = $config->get('vendor-dir');
             if (is_dir($vendorDir) && $fs->isDirEmpty($vendorDir)) {
-                @rmdir($vendorDir);
+                Silencer::call('rmdir', $vendorDir);
             }
         }
 
         return 0;
     }
 
-    protected function installRootPackage(IOInterface $io, Config $config, $packageName, $directory = null, $packageVersion = null, $stability = 'stable', $preferSource = false, $preferDist = false, $installDevPackages = false, $repositoryUrl = null, $disablePlugins = false, $noScripts = false, $keepVcs = false, $noProgress = false)
+    protected function installRootPackage(IOInterface $io, Config $config, $packageName, $directory = null, $packageVersion = null, $stability = 'stable', $preferSource = false, $preferDist = false, $installDevPackages = false, array $repositories = null, $disablePlugins = false, $noScripts = false, $noProgress = false, $ignorePlatformReqs = false, $secureHttp = true)
     {
-        if (null === $repositoryUrl) {
-            $sourceRepo = new CompositeRepository(Factory::createDefaultRepositories($io, $config));
-        } elseif ("json" === pathinfo($repositoryUrl, PATHINFO_EXTENSION)) {
-            $sourceRepo = new FilesystemRepository(new JsonFile($repositoryUrl, new RemoteFilesystem($io, $config)));
-        } elseif (0 === strpos($repositoryUrl, 'http')) {
-            $sourceRepo = new ComposerRepository(array('url' => $repositoryUrl), $io, $config);
-        } else {
-            throw new \InvalidArgumentException("Invalid repository url given. Has to be a .json file or an http url.");
+        if (!$secureHttp) {
+            $config->merge(array('config' => array('secure-http' => false)));
         }
 
         $parser = new VersionParser();
@@ -249,8 +320,33 @@ EOT
             $packageVersion = $requirements[0]['version'];
         }
 
+        // if no directory was specified, use the 2nd part of the package name
+        if (null === $directory) {
+            $parts = explode("/", $name, 2);
+            $directory = getcwd() . DIRECTORY_SEPARATOR . array_pop($parts);
+        }
+
+        $process = new ProcessExecutor($io);
+        $fs = new Filesystem($process);
+        if (!$fs->isAbsolutePath($directory)) {
+            $directory = getcwd() . DIRECTORY_SEPARATOR . $directory;
+        }
+
+        $io->writeError('<info>Creating a "' . $packageName . '" project at "' . $fs->findShortestPath(getcwd(), $directory, true) . '"</info>');
+
+        if (file_exists($directory)) {
+            if (!is_dir($directory)) {
+                throw new \InvalidArgumentException('Cannot create project directory at "'.$directory.'", it exists as a file.');
+            }
+            if (!$fs->isDirEmpty($directory)) {
+                throw new \InvalidArgumentException('Project directory "'.$directory.'" is not empty.');
+            }
+        }
+
         if (null === $stability) {
-            if (preg_match('{^[^,\s]*?@('.implode('|', array_keys(BasePackage::$stabilities)).')$}i', $packageVersion, $match)) {
+            if (null === $packageVersion) {
+                $stability = 'stable';
+            } elseif (preg_match('{^[^,\s]*?@('.implode('|', array_keys(BasePackage::$stabilities)).')$}i', $packageVersion, $match)) {
                 $stability = $match[1];
             } else {
                 $stability = VersionParser::parseStability($packageVersion);
@@ -263,92 +359,103 @@ EOT
             throw new \InvalidArgumentException('Invalid stability provided ('.$stability.'), must be one of: '.implode(', ', array_keys(BasePackage::$stabilities)));
         }
 
-        $pool = new Pool($stability);
-        $pool->addRepository($sourceRepo);
+        $composer = Factory::create($io, $config->all(), $disablePlugins);
+        $config = $composer->getConfig();
+        $rm = $composer->getRepositoryManager();
+
+        $repositorySet = new RepositorySet($stability);
+        if (null === $repositories) {
+            $repositorySet->addRepository(new CompositeRepository(RepositoryFactory::defaultRepos($io, $config, $rm)));
+        } else {
+            foreach ($repositories as $repo) {
+                $repoConfig = RepositoryFactory::configFromString($io, $config, $repo, true);
+                if (
+                    (isset($repoConfig['packagist']) && $repoConfig === array('packagist' => false))
+                    || (isset($repoConfig['packagist.org']) && $repoConfig === array('packagist.org' => false))
+                ) {
+                    continue;
+                }
+                $repositorySet->addRepository(RepositoryFactory::createRepo($io, $config, $repoConfig, $rm));
+            }
+        }
+
+        $platformOverrides = $config->get('platform') ?: array();
+        $platformRepo = new PlatformRepository(array(), $platformOverrides);
 
         // find the latest version if there are multiple
-        $versionSelector = new VersionSelector($pool);
-        $package = $versionSelector->findBestCandidate($name, $packageVersion);
+        $versionSelector = new VersionSelector($repositorySet, $platformRepo);
+        $package = $versionSelector->findBestCandidate($name, $packageVersion, $stability, $ignorePlatformReqs);
 
         if (!$package) {
-            throw new \InvalidArgumentException("Could not find package $name" . ($packageVersion ? " with version $packageVersion." : " with stability $stability."));
+            $errorMessage = "Could not find package $name with " . ($packageVersion ? "version $packageVersion" : "stability $stability");
+            if (true !== $ignorePlatformReqs && $versionSelector->findBestCandidate($name, $packageVersion, $stability, true)) {
+                throw new \InvalidArgumentException($errorMessage .' in a version installable using your PHP version, PHP extensions and Composer version.');
+            }
+
+            throw new \InvalidArgumentException($errorMessage .'.');
         }
 
-        if (null === $directory) {
-            $parts = explode("/", $name, 2);
-            $directory = getcwd() . DIRECTORY_SEPARATOR . array_pop($parts);
+        // handler Ctrl+C for unix-like systems
+        if (function_exists('pcntl_async_signals') && function_exists('pcntl_signal')) {
+            @mkdir($directory, 0777, true);
+            if ($realDir = realpath($directory)) {
+                pcntl_async_signals(true);
+                pcntl_signal(SIGINT, function () use ($realDir) {
+                    $fs = new Filesystem();
+                    $fs->removeDirectory($realDir);
+                    exit(130);
+                });
+            }
+        }
+        // handler Ctrl+C for Windows on PHP 7.4+
+        if (function_exists('sapi_windows_set_ctrl_handler') && PHP_SAPI === 'cli') {
+            @mkdir($directory, 0777, true);
+            if ($realDir = realpath($directory)) {
+                sapi_windows_set_ctrl_handler(function () use ($realDir) {
+                    $fs = new Filesystem();
+                    $fs->removeDirectory($realDir);
+                    exit(130);
+                });
+            }
         }
 
-        $io->write('<info>Installing ' . $package->getName() . ' (' . VersionParser::formatVersion($package, false) . ')</info>');
+        // avoid displaying 9999999-dev as version if default-branch was selected
+        if ($package instanceof AliasPackage && $package->getPrettyVersion() === VersionParser::DEFAULT_BRANCH_ALIAS) {
+            $package = $package->getAliasOf();
+        }
+
+        $io->writeError('<info>Installing ' . $package->getName() . ' (' . $package->getFullPrettyVersion(false) . ')</info>');
 
         if ($disablePlugins) {
-            $io->write('<info>Plugins have been disabled.</info>');
+            $io->writeError('<info>Plugins have been disabled.</info>');
         }
 
-        if (0 === strpos($package->getPrettyVersion(), 'dev-') && in_array($package->getSourceType(), array('git', 'hg'))) {
-            $package->setSourceReference(substr($package->getPrettyVersion(), 4));
+        if ($package instanceof AliasPackage) {
+            $package = $package->getAliasOf();
         }
 
-        $dm = $this->createDownloadManager($io, $config);
+        $dm = $composer->getDownloadManager();
         $dm->setPreferSource($preferSource)
-            ->setPreferDist($preferDist)
-            ->setOutputProgress(!$noProgress);
+            ->setPreferDist($preferDist);
 
-        $projectInstaller = new ProjectInstaller($directory, $dm);
-        $im = $this->createInstallationManager();
+        $projectInstaller = new ProjectInstaller($directory, $dm, $fs);
+        $im = $composer->getInstallationManager();
+        $im->setOutputProgress(!$noProgress);
         $im->addInstaller($projectInstaller);
-        $im->install(new InstalledFilesystemRepository(new JsonFile('php://memory')), new InstallOperation($package));
-        $im->notifyInstalls();
+        $im->execute(new InstalledFilesystemRepository(new JsonFile('php://memory')), array(new InstallOperation($package)));
+        $im->notifyInstalls($io);
+
+        // collect suggestions
+        $this->suggestedPackagesReporter->addSuggestionsFromPackage($package);
 
         $installedFromVcs = 'source' === $package->getInstallationSource();
 
-        $io->write('<info>Created project in ' . $directory . '</info>');
+        $io->writeError('<info>Created project in ' . $directory . '</info>');
         chdir($directory);
 
-        putenv('COMPOSER_ROOT_VERSION='.$package->getPrettyVersion());
+        $_SERVER['COMPOSER_ROOT_VERSION'] = $package->getPrettyVersion();
+        putenv('COMPOSER_ROOT_VERSION='.$_SERVER['COMPOSER_ROOT_VERSION']);
 
         return $installedFromVcs;
-    }
-
-    protected function createDownloadManager(IOInterface $io, Config $config)
-    {
-        $factory = new Factory();
-
-        return $factory->createDownloadManager($io, $config);
-    }
-
-    protected function createInstallationManager()
-    {
-        return new InstallationManager();
-    }
-
-    /**
-     * Updated preferSource or preferDist based on the preferredInstall config option
-     * @param Config         $config
-     * @param InputInterface $input
-     * @param boolean        $preferSource
-     * @param boolean        $preferDist
-     */
-    protected function updatePreferredOptions(Config $config, InputInterface $input, &$preferSource, &$preferDist)
-    {
-        switch ($config->get('preferred-install')) {
-            case 'source':
-                $preferSource = true;
-                $preferDist = false;
-                break;
-            case 'dist':
-                $preferSource = false;
-                $preferDist = true;
-                break;
-            case 'auto':
-            default:
-                // noop
-                break;
-        }
-
-        if ($input->getOption('prefer-source') || $input->getOption('prefer-dist')) {
-            $preferSource = $input->getOption('prefer-source');
-            $preferDist = $input->getOption('prefer-dist');
-        }
     }
 }

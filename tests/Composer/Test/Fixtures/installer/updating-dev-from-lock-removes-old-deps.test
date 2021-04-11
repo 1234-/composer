@@ -13,14 +13,16 @@ Installing locked dev packages should remove old dependencies
         {
             "name": "a/devpackage", "version": "dev-master",
             "source": { "reference": "newref", "url": "", "type": "git" },
-            "require": {}
+            "require": {},
+            "default-branch": true
         }
     ],
-    "packages-dev": null,
+    "packages-dev": [],
     "aliases": [],
     "minimum-stability": "dev",
     "stability-flags": [],
-    "prefer-stable": false
+    "prefer-stable": false,
+    "prefer-lowest": false
 }
 --INSTALLED--
 [
@@ -29,16 +31,19 @@ Installing locked dev packages should remove old dependencies
         "source": { "reference": "oldref", "url": "", "type": "git" },
         "require": {
             "a/dependency": "*"
-        }
+        },
+        "default-branch": true
     },
     {
         "name": "a/dependency", "version": "dev-master",
         "source": { "reference": "ref", "url": "", "type": "git" },
-        "require": {}
+        "require": {},
+        "default-branch": true
     }
 ]
 --RUN--
 install
 --EXPECT--
-Uninstalling a/dependency (dev-master ref)
-Updating a/devpackage (dev-master oldref) to a/devpackage (dev-master newref)
+Removing a/dependency (dev-master ref)
+Marking a/dependency (9999999-dev ref) as uninstalled, alias of a/dependency (dev-master ref)
+Upgrading a/devpackage (dev-master oldref => dev-master newref)

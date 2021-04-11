@@ -14,6 +14,8 @@ namespace Composer\Downloader;
 
 use Composer\Package\PackageInterface;
 use Symfony\Component\Finder\Finder;
+use React\Promise\PromiseInterface;
+use Composer\DependencyResolver\Operation\InstallOperation;
 
 /**
  * Base downloader for archives
@@ -26,102 +28,159 @@ abstract class ArchiveDownloader extends FileDownloader
 {
     /**
      * {@inheritDoc}
+     * @throws \RuntimeException
+     * @throws \UnexpectedValueException
      */
-    public function download(PackageInterface $package, $path)
+    public function install(PackageInterface $package, $path, $output = true)
     {
-        $temporaryDir = $this->config->get('vendor-dir').'/composer/'.substr(md5(uniqid('', true)), 0, 8);
-        $retries = 3;
-        while ($retries--) {
-            $fileName = parent::download($package, $path);
+        if ($output) {
+            $this->io->writeError("  - " . InstallOperation::format($package) . $this->getInstallOperationAppendix($package, $path));
+        }
 
-            if ($this->io->isVerbose()) {
-                $this->io->write('    Extracting archive');
+        $vendorDir = $this->config->get('vendor-dir');
+
+        // clean up the target directory, unless it contains the vendor dir, as the vendor dir contains
+        // the archive to be extracted. This is the case when installing with create-project in the current directory
+        // but in that case we ensure the directory is empty already in ProjectInstaller so no need to empty it here.
+        if (false === strpos($this->filesystem->normalizePath($vendorDir), $this->filesystem->normalizePath($path.DIRECTORY_SEPARATOR))) {
+            $this->filesystem->emptyDirectory($path);
+        }
+
+        do {
+            $temporaryDir = $vendorDir.'/composer/'.substr(md5(uniqid('', true)), 0, 8);
+        } while (is_dir($temporaryDir));
+
+        $this->addCleanupPath($package, $temporaryDir);
+        // avoid cleaning up $path if installing in "." for eg create-project as we can not
+        // delete the directory we are currently in on windows
+        if (!is_dir($path) || realpath($path) !== getcwd()) {
+            $this->addCleanupPath($package, $path);
+        }
+
+        $this->filesystem->ensureDirectoryExists($temporaryDir);
+        $fileName = $this->getFileName($package, $path);
+
+        $filesystem = $this->filesystem;
+        $self = $this;
+
+        $cleanup = function () use ($path, $filesystem, $temporaryDir, $package, $self) {
+            // remove cache if the file was corrupted
+            $self->clearLastCacheWrite($package);
+
+            // clean up
+            $filesystem->removeDirectory($temporaryDir);
+            if (is_dir($path) && realpath($path) !== getcwd()) {
+                $filesystem->removeDirectory($path);
             }
+            $self->removeCleanupPath($package, $temporaryDir);
+            $self->removeCleanupPath($package, realpath($path));
+        };
 
-            try {
-                $this->filesystem->ensureDirectoryExists($temporaryDir);
-                try {
-                    $this->extract($fileName, $temporaryDir);
-                } catch (\Exception $e) {
-                    // remove cache if the file was corrupted
-                    parent::clearCache($package, $path);
-                    throw $e;
-                }
+        $promise = null;
+        try {
+            $promise = $this->extract($package, $fileName, $temporaryDir);
+        } catch (\Exception $e) {
+            $cleanup();
+            throw $e;
+        }
 
-                $this->filesystem->unlink($fileName);
+        if (!$promise instanceof PromiseInterface) {
+            $promise = \React\Promise\resolve();
+        }
 
-                $contentDir = $this->getFolderContent($temporaryDir);
+        return $promise->then(function () use ($self, $package, $filesystem, $fileName, $temporaryDir, $path) {
+            $filesystem->unlink($fileName);
 
-                // only one dir in the archive, extract its contents out of it
-                if (1 === count($contentDir) && is_dir(reset($contentDir))) {
-                    $contentDir = $this->getFolderContent((string) reset($contentDir));
-                }
+            /**
+             * Returns the folder content, excluding .DS_Store
+             *
+             * @param  string         $dir Directory
+             * @return \SplFileInfo[]
+             */
+            $getFolderContent = function ($dir) {
+                $finder = Finder::create()
+                    ->ignoreVCS(false)
+                    ->ignoreDotFiles(false)
+                    ->notName('.DS_Store')
+                    ->depth(0)
+                    ->in($dir);
+
+                return iterator_to_array($finder);
+            };
+            $renameRecursively = null;
+            /**
+             * Renames (and recursively merges if needed) a folder into another one
+             *
+             * For custom installers, where packages may share paths, and given Composer 2's parallelism, we need to make sure
+             * that the source directory gets merged into the target one if the target exists. Otherwise rename() by default would
+             * put the source into the target e.g. src/ => target/src/ (assuming target exists) instead of src/ => target/
+             *
+             * @param string $from Directory
+             * @param string $to Directory
+             * @return void
+             */
+            $renameRecursively = function ($from, $to) use ($filesystem, $getFolderContent, $package, &$renameRecursively) {
+                $contentDir = $getFolderContent($from);
 
                 // move files back out of the temp dir
                 foreach ($contentDir as $file) {
                     $file = (string) $file;
-                    $this->filesystem->rename($file, $path . '/' . basename($file));
+                    if (is_dir($to . '/' . basename($file))) {
+                        if (!is_dir($file)) {
+                            throw new \RuntimeException('Installing '.$package.' would lead to overwriting the '.$to.'/'.basename($file).' directory with a file from the package, invalid operation.');
+                        }
+                        $renameRecursively($file, $to . '/' . basename($file));
+                    } else {
+                        $filesystem->rename($file, $to . '/' . basename($file));
+                    }
                 }
+            };
 
-                $this->filesystem->removeDirectory($temporaryDir);
-                if ($this->filesystem->isDirEmpty($this->config->get('vendor-dir').'/composer/')) {
-                    $this->filesystem->removeDirectory($this->config->get('vendor-dir').'/composer/');
-                }
-                if ($this->filesystem->isDirEmpty($this->config->get('vendor-dir'))) {
-                    $this->filesystem->removeDirectory($this->config->get('vendor-dir'));
-                }
-            } catch (\Exception $e) {
-                // clean up
-                $this->filesystem->removeDirectory($path);
-                $this->filesystem->removeDirectory($temporaryDir);
-
-                // retry downloading if we have an invalid zip file
-                if ($retries && $e instanceof \UnexpectedValueException && class_exists('ZipArchive') && $e->getCode() === \ZipArchive::ER_NOZIP) {
-                    $this->io->write('    Invalid zip file, retrying...');
-                    usleep(500000);
-                    continue;
-                }
-
-                throw $e;
+            $renameAsOne = false;
+            if (!file_exists($path) || ($filesystem->isDirEmpty($path) && $filesystem->removeDirectory($path))) {
+                $renameAsOne = true;
             }
 
-            break;
-        }
+            $contentDir = $getFolderContent($temporaryDir);
+            $singleDirAtTopLevel = 1 === count($contentDir) && is_dir(reset($contentDir));
 
-        $this->io->write('');
+            if ($renameAsOne) {
+                // if the target $path is clear, we can rename the whole package in one go instead of looping over the contents
+                if ($singleDirAtTopLevel) {
+                    $extractedDir = (string) reset($contentDir);
+                } else {
+                    $extractedDir = $temporaryDir;
+                }
+                $filesystem->rename($extractedDir, $path);
+            } else {
+                // only one dir in the archive, extract its contents out of it
+                $from = $temporaryDir;
+                if ($singleDirAtTopLevel) {
+                    $from = (string) reset($contentDir);
+                }
+
+                $renameRecursively($from, $path);
+            }
+
+            $promise = $filesystem->removeDirectoryAsync($temporaryDir);
+
+            return $promise->then(function () use ($self, $package, $path, $temporaryDir) {
+                $self->removeCleanupPath($package, $temporaryDir);
+                $self->removeCleanupPath($package, $path);
+            });
+        }, function ($e) use ($cleanup) {
+            $cleanup();
+
+            throw $e;
+        });
     }
 
     /**
-     * {@inheritdoc}
+     * {@inheritDoc}
      */
-    protected function getFileName(PackageInterface $package, $path)
+    protected function getInstallOperationAppendix(PackageInterface $package, $path)
     {
-        return rtrim($path.'/'.md5($path.spl_object_hash($package)).'.'.pathinfo(parse_url($package->getDistUrl(), PHP_URL_PATH), PATHINFO_EXTENSION), '.');
-    }
-
-    /**
-     * {@inheritdoc}
-     */
-    protected function processUrl(PackageInterface $package, $url)
-    {
-        if ($package->getDistReference() && strpos($url, 'github.com')) {
-            if (preg_match('{^https?://(?:www\.)?github\.com/([^/]+)/([^/]+)/(zip|tar)ball/(.+)$}i', $url, $match)) {
-                // update legacy github archives to API calls with the proper reference
-                $url = 'https://api.github.com/repos/' . $match[1] . '/'. $match[2] . '/' . $match[3] . 'ball/' . $package->getDistReference();
-            } elseif ($package->getDistReference() && preg_match('{^https?://(?:www\.)?github\.com/([^/]+)/([^/]+)/archive/.+\.(zip|tar)(?:\.gz)?$}i', $url, $match)) {
-                // update current github web archives to API calls with the proper reference
-                $url = 'https://api.github.com/repos/' . $match[1] . '/'. $match[2] . '/' . $match[3] . 'ball/' . $package->getDistReference();
-            } elseif ($package->getDistReference() && preg_match('{^https?://api\.github\.com/repos/([^/]+)/([^/]+)/(zip|tar)ball(?:/.+)?$}i', $url, $match)) {
-                // update api archives to the proper reference
-                $url = 'https://api.github.com/repos/' . $match[1] . '/'. $match[2] . '/' . $match[3] . 'ball/' . $package->getDistReference();
-            }
-        }
-
-        if (!extension_loaded('openssl') && (0 === strpos($url, 'https:') || 0 === strpos($url, 'http://github.com'))) {
-            throw new \RuntimeException('You must enable the openssl extension to download files via https');
-        }
-
-        return parent::processUrl($package, $url);
+        return ': Extracting archive';
     }
 
     /**
@@ -131,23 +190,7 @@ abstract class ArchiveDownloader extends FileDownloader
      * @param string $path Directory
      *
      * @throws \UnexpectedValueException If can not extract downloaded file to path
+     * @return PromiseInterface|null
      */
-    abstract protected function extract($file, $path);
-
-    /**
-     * Returns the folder content, excluding dotfiles
-     *
-     * @param  string         $dir Directory
-     * @return \SplFileInfo[]
-     */
-    private function getFolderContent($dir)
-    {
-        $finder = Finder::create()
-            ->ignoreVCS(false)
-            ->ignoreDotFiles(false)
-            ->depth(0)
-            ->in($dir);
-
-        return iterator_to_array($finder);
-    }
+    abstract protected function extract(PackageInterface $package, $file, $path);
 }

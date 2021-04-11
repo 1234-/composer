@@ -59,7 +59,7 @@ abstract class BaseExcludeFilter
                 $path = $relativePath;
             }
 
-            if (preg_match($pattern, $path)) {
+            if (@preg_match($pattern, $path)) {
                 $exclude = !$negate;
             }
         }
@@ -71,7 +71,7 @@ abstract class BaseExcludeFilter
      * Processes a file containing exclude rules of different formats per line
      *
      * @param array    $lines      A set of lines to be parsed
-     * @param callback $lineParser The parser to be used on each line
+     * @param callable $lineParser The parser to be used on each line
      *
      * @return array Exclude patterns to be used in filter()
      */
@@ -83,7 +83,7 @@ abstract class BaseExcludeFilter
                     $line = trim($line);
 
                     if (!$line || 0 === strpos($line, '#')) {
-                        return;
+                        return null;
                     }
 
                     return call_user_func($lineParser, $line);
@@ -123,26 +123,25 @@ abstract class BaseExcludeFilter
     protected function generatePattern($rule)
     {
         $negate = false;
-        $pattern = '#';
+        $pattern = '';
 
-        if (strlen($rule) && $rule[0] === '!') {
+        if ($rule !== '' && $rule[0] === '!') {
             $negate = true;
-            $rule = substr($rule, 1);
+            $rule = ltrim($rule, '!');
         }
 
-        if (strlen($rule) && $rule[0] === '/') {
-            $pattern .= '^/';
-            $rule = substr($rule, 1);
-        } elseif (strlen($rule) - 1 === strpos($rule, '/')) {
-            $pattern .= '/';
-            $rule = substr($rule, 0, -1);
-        } elseif (false === strpos($rule, '/')) {
-            $pattern .= '/';
+        $firstSlashPosition = strpos($rule, '/');
+        if (0 === $firstSlashPosition) {
+            $pattern = '^/';
+        } elseif (false === $firstSlashPosition || strlen($rule) - 1 === $firstSlashPosition) {
+            $pattern = '/';
         }
+
+        $rule = trim($rule, '/');
 
         // remove delimiters as well as caret (^) and dollar sign ($) from the regex
-        $pattern .= substr(Finder\Glob::toRegex($rule), 2, -2) . '(?=$|/)';
+        $rule = substr(Finder\Glob::toRegex($rule), 2, -2);
 
-        return array($pattern . '#', $negate, false);
+        return array('{'.$pattern.$rule.'(?=$|/)}', $negate, false);
     }
 }

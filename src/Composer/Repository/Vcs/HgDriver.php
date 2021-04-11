@@ -13,7 +13,8 @@
 namespace Composer\Repository\Vcs;
 
 use Composer\Config;
-use Composer\Json\JsonFile;
+use Composer\Cache;
+use Composer\Util\Hg as HgUtils;
 use Composer\Util\ProcessExecutor;
 use Composer\Util\Filesystem;
 use Composer\IO\IOInterface;
@@ -27,7 +28,6 @@ class HgDriver extends VcsDriver
     protected $branches;
     protected $rootIdentifier;
     protected $repoDir;
-    protected $infoCache = array();
 
     /**
      * {@inheritDoc}
@@ -37,6 +37,10 @@ class HgDriver extends VcsDriver
         if (Filesystem::isLocalPath($this->url)) {
             $this->repoDir = $this->url;
         } else {
+            if (!Cache::isUsable($this->config->get('cache-vcs-dir'))) {
+                throw new \RuntimeException('HgDriver requires a usable cache directory, and it looks like you set it to be disabled');
+            }
+
             $cacheDir = $this->config->get('cache-vcs-dir');
             $this->repoDir = $cacheDir . '/' . preg_replace('{[^a-z0-9]}i', '-', $this->url) . '/';
 
@@ -47,24 +51,26 @@ class HgDriver extends VcsDriver
                 throw new \RuntimeException('Can not clone '.$this->url.' to access package information. The "'.$cacheDir.'" directory is not writable by the current user.');
             }
 
+            // Ensure we are allowed to use this URL by config
+            $this->config->prohibitUrlByConfig($this->url, $this->io);
+
+            $hgUtils = new HgUtils($this->io, $this->config, $this->process);
+
             // update the repo if it is a valid hg repository
             if (is_dir($this->repoDir) && 0 === $this->process->execute('hg summary', $output, $this->repoDir)) {
                 if (0 !== $this->process->execute('hg pull', $output, $this->repoDir)) {
-                    $this->io->write('<error>Failed to update '.$this->url.', package information from this repository may be outdated ('.$this->process->getErrorOutput().')</error>');
+                    $this->io->writeError('<error>Failed to update '.$this->url.', package information from this repository may be outdated ('.$this->process->getErrorOutput().')</error>');
                 }
             } else {
                 // clean up directory and do a fresh clone into it
                 $fs->removeDirectory($this->repoDir);
 
-                if (0 !== $this->process->execute(sprintf('hg clone --noupdate %s %s', ProcessExecutor::escape($this->url), ProcessExecutor::escape($this->repoDir)), $output, $cacheDir)) {
-                    $output = $this->process->getErrorOutput();
+                $repoDir = $this->repoDir;
+                $command = function ($url) use ($repoDir) {
+                    return sprintf('hg clone --noupdate %s %s', ProcessExecutor::escape($url), ProcessExecutor::escape($repoDir));
+                };
 
-                    if (0 !== $this->process->execute('hg --version', $ignoredOutput)) {
-                        throw new \RuntimeException('Failed to clone '.$this->url.', hg was not found, check that it is installed and in your PATH env.' . "\n\n" . $this->process->getErrorOutput());
-                    }
-
-                    throw new \RuntimeException('Failed to clone '.$this->url.', could not read packages from it' . "\n\n" .$output);
-                }
+                $hgUtils->runCommand($command, $this->url, null);
             }
         }
 
@@ -111,28 +117,35 @@ class HgDriver extends VcsDriver
     }
 
     /**
-     * {@inheritDoc}
+     * {@inheritdoc}
      */
-    public function getComposerInformation($identifier)
+    public function getFileContent($file, $identifier)
     {
-        if (!isset($this->infoCache[$identifier])) {
-            $this->process->execute(sprintf('hg cat -r %s composer.json', ProcessExecutor::escape($identifier)), $composer, $this->repoDir);
+        $resource = sprintf('hg cat -r %s %s', ProcessExecutor::escape($identifier), ProcessExecutor::escape($file));
+        $this->process->execute($resource, $content, $this->repoDir);
 
-            if (!trim($composer)) {
-                return;
-            }
-
-            $composer = JsonFile::parseJson($composer, $identifier);
-
-            if (!isset($composer['time'])) {
-                $this->process->execute(sprintf('hg log --template "{date|rfc3339date}" -r %s', ProcessExecutor::escape($identifier)), $output, $this->repoDir);
-                $date = new \DateTime(trim($output), new \DateTimeZone('UTC'));
-                $composer['time'] = $date->format('Y-m-d H:i:s');
-            }
-            $this->infoCache[$identifier] = $composer;
+        if (!trim($content)) {
+            return null;
         }
 
-        return $this->infoCache[$identifier];
+        return $content;
+    }
+
+    /**
+     * {@inheritdoc}
+     */
+    public function getChangeDate($identifier)
+    {
+        $this->process->execute(
+            sprintf(
+                'hg log --template "{date|rfc3339date}" -r %s',
+                ProcessExecutor::escape($identifier)
+            ),
+            $output,
+            $this->repoDir
+        );
+
+        return new \DateTime(trim($output), new \DateTimeZone('UTC'));
     }
 
     /**
@@ -192,7 +205,7 @@ class HgDriver extends VcsDriver
      */
     public static function supports(IOInterface $io, Config $config, $url, $deep = false)
     {
-        if (preg_match('#(^(?:https?|ssh)://(?:[^@]@)?bitbucket.org|https://(?:.*?)\.kilnhg.com)#i', $url)) {
+        if (preg_match('#(^(?:https?|ssh)://(?:[^@]+@)?bitbucket.org|https://(?:.*?)\.kilnhg.com)#i', $url)) {
             return true;
         }
 
@@ -200,10 +213,10 @@ class HgDriver extends VcsDriver
         if (Filesystem::isLocalPath($url)) {
             $url = Filesystem::getPlatformPath($url);
             if (!is_dir($url)) {
-                throw new \RuntimeException('Directory does not exist: '.$url);
+                return false;
             }
 
-            $process = new ProcessExecutor();
+            $process = new ProcessExecutor($io);
             // check whether there is a hg repo in that path
             if ($process->execute('hg summary', $output, $url) === 0) {
                 return true;
@@ -214,8 +227,8 @@ class HgDriver extends VcsDriver
             return false;
         }
 
-        $processExecutor = new ProcessExecutor();
-        $exit = $processExecutor->execute(sprintf('hg identify %s', ProcessExecutor::escape($url)), $ignored);
+        $process = new ProcessExecutor($io);
+        $exit = $process->execute(sprintf('hg identify %s', ProcessExecutor::escape($url)), $ignored);
 
         return $exit === 0;
     }

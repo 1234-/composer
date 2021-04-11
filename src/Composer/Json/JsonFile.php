@@ -15,7 +15,8 @@ namespace Composer\Json;
 use JsonSchema\Validator;
 use Seld\JsonLint\JsonParser;
 use Seld\JsonLint\ParsingException;
-use Composer\Util\RemoteFilesystem;
+use Composer\Util\HttpDownloader;
+use Composer\IO\IOInterface;
 use Composer\Downloader\TransportException;
 
 /**
@@ -33,24 +34,29 @@ class JsonFile
     const JSON_PRETTY_PRINT = 128;
     const JSON_UNESCAPED_UNICODE = 256;
 
+    const COMPOSER_SCHEMA_PATH = '/../../../res/composer-schema.json';
+
     private $path;
-    private $rfs;
+    private $httpDownloader;
+    private $io;
 
     /**
      * Initializes json file reader/parser.
      *
-     * @param  string                    $path path to a lockfile
-     * @param  RemoteFilesystem          $rfs  required for loading http/https json files
+     * @param  string                    $path           path to a lockfile
+     * @param  HttpDownloader            $httpDownloader required for loading http/https json files
+     * @param  IOInterface               $io
      * @throws \InvalidArgumentException
      */
-    public function __construct($path, RemoteFilesystem $rfs = null)
+    public function __construct($path, HttpDownloader $httpDownloader = null, IOInterface $io = null)
     {
         $this->path = $path;
 
-        if (null === $rfs && preg_match('{^https?://}i', $path)) {
-            throw new \InvalidArgumentException('http urls require a RemoteFilesystem instance to be passed');
+        if (null === $httpDownloader && preg_match('{^https?://}i', $path)) {
+            throw new \InvalidArgumentException('http urls require a HttpDownloader instance to be passed');
         }
-        $this->rfs = $rfs;
+        $this->httpDownloader = $httpDownloader;
+        $this->io = $io;
     }
 
     /**
@@ -74,15 +80,24 @@ class JsonFile
     /**
      * Reads json file.
      *
+     * @throws ParsingException
      * @throws \RuntimeException
      * @return mixed
      */
     public function read()
     {
         try {
-            if ($this->rfs) {
-                $json = $this->rfs->getContents($this->path, $this->path, false);
+            if ($this->httpDownloader) {
+                $json = $this->httpDownloader->get($this->path)->getBody();
             } else {
+                if ($this->io && $this->io->isDebug()) {
+                    $realpathInfo = '';
+                    $realpath = realpath($this->path);
+                    if (false !== $realpath && $realpath !== $this->path) {
+                        $realpathInfo = ' (' . $realpath . ')';
+                    }
+                    $this->io->writeError('Reading ' . $this->path . $realpathInfo);
+                }
                 $json = file_get_contents($this->path);
             }
         } catch (TransportException $e) {
@@ -97,17 +112,23 @@ class JsonFile
     /**
      * Writes json file.
      *
-     * @param  array                     $hash    writes hash into json file
-     * @param  int                       $options json_encode options (defaults to JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)
-     * @throws \UnexpectedValueException
+     * @param  array                                $hash    writes hash into json file
+     * @param  int                                  $options json_encode options (defaults to JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)
+     * @throws \UnexpectedValueException|\Exception
      */
     public function write(array $hash, $options = 448)
     {
+        if ($this->path === 'php://memory') {
+            file_put_contents($this->path, static::encode($hash, $options));
+
+            return;
+        }
+
         $dir = dirname($this->path);
         if (!is_dir($dir)) {
             if (file_exists($dir)) {
                 throw new \UnexpectedValueException(
-                    $dir.' exists and is not a directory.'
+                    realpath($dir).' exists and is not a directory.'
                 );
             }
             if (!@mkdir($dir, 0777, true)) {
@@ -120,7 +141,7 @@ class JsonFile
         $retries = 3;
         while ($retries--) {
             try {
-                file_put_contents($this->path, static::encode($hash, $options). ($options & self::JSON_PRETTY_PRINT ? "\n" : ''));
+                $this->filePutContentsIfModified($this->path, static::encode($hash, $options). ($options & self::JSON_PRETTY_PRINT ? "\n" : ''));
                 break;
             } catch (\Exception $e) {
                 if ($retries) {
@@ -134,13 +155,28 @@ class JsonFile
     }
 
     /**
+     * modify file properties only if content modified
+     */
+    private function filePutContentsIfModified($path, $content)
+    {
+        $currentContent = @file_get_contents($path);
+        if (!$currentContent || ($currentContent != $content)) {
+            return file_put_contents($path, $content);
+        }
+
+        return 0;
+    }
+
+    /**
      * Validates the schema of the current json file according to composer-schema.json rules
      *
-     * @param  int                     $schema a JsonFile::*_SCHEMA constant
-     * @return bool                    true on success
+     * @param  int                     $schema     a JsonFile::*_SCHEMA constant
+     * @param  string|null             $schemaFile a path to the schema file
      * @throws JsonValidationException
+     * @throws ParsingException
+     * @return bool                    true on success
      */
-    public function validateSchema($schema = self::STRICT_SCHEMA)
+    public function validateSchema($schema = self::STRICT_SCHEMA, $schemaFile = null)
     {
         $content = file_get_contents($this->path);
         $data = json_decode($content);
@@ -149,13 +185,20 @@ class JsonFile
             self::validateSyntax($content, $this->path);
         }
 
-        $schemaFile = __DIR__ . '/../../../res/composer-schema.json';
-        $schemaData = json_decode(file_get_contents($schemaFile));
+        if (null === $schemaFile) {
+            $schemaFile = __DIR__ . self::COMPOSER_SCHEMA_PATH;
+        }
+
+        // Prepend with file:// only when not using a special schema already (e.g. in the phar)
+        if (false === strpos($schemaFile, '://')) {
+            $schemaFile = 'file://' . $schemaFile;
+        }
+
+        $schemaData = (object) array('$ref' => $schemaFile);
 
         if ($schema === self::LAX_SCHEMA) {
             $schemaData->additionalProperties = true;
-            $schemaData->properties->name->required = false;
-            $schemaData->properties->description->required = false;
+            $schemaData->required = array();
         }
 
         $validator = new Validator();
@@ -183,8 +226,11 @@ class JsonFile
      */
     public static function encode($data, $options = 448)
     {
-        if (version_compare(PHP_VERSION, '5.4', '>=')) {
+        if (PHP_VERSION_ID >= 50400) {
             $json = json_encode($data, $options);
+            if (false === $json) {
+                self::throwEncodeError(json_last_error());
+            }
 
             //  compact brackets to follow recent php versions
             if (PHP_VERSION_ID < 50428 || (PHP_VERSION_ID >= 50500 && PHP_VERSION_ID < 50512) || (defined('JSON_C_VERSION') && version_compare(phpversion('json'), '1.3.6', '<'))) {
@@ -196,6 +242,9 @@ class JsonFile
         }
 
         $json = json_encode($data);
+        if (false === $json) {
+            self::throwEncodeError(json_last_error());
+        }
 
         $prettyPrint = (bool) ($options & self::JSON_PRETTY_PRINT);
         $unescapeUnicode = (bool) ($options & self::JSON_UNESCAPED_UNICODE);
@@ -205,9 +254,35 @@ class JsonFile
             return $json;
         }
 
-        $result = JsonFormatter::format($json, $unescapeUnicode, $unescapeSlashes);
+        return JsonFormatter::format($json, $unescapeUnicode, $unescapeSlashes);
+    }
 
-        return $result;
+    /**
+     * Throws an exception according to a given code with a customized message
+     *
+     * @param  int               $code return code of json_last_error function
+     * @throws \RuntimeException
+     */
+    private static function throwEncodeError($code)
+    {
+        switch ($code) {
+            case JSON_ERROR_DEPTH:
+                $msg = 'Maximum stack depth exceeded';
+                break;
+            case JSON_ERROR_STATE_MISMATCH:
+                $msg = 'Underflow or the modes mismatch';
+                break;
+            case JSON_ERROR_CTRL_CHAR:
+                $msg = 'Unexpected control character found';
+                break;
+            case JSON_ERROR_UTF8:
+                $msg = 'Malformed UTF-8 characters, possibly incorrectly encoded';
+                break;
+            default:
+                $msg = 'Unknown error';
+        }
+
+        throw new \RuntimeException('JSON encoding failed: '.$msg);
     }
 
     /**
@@ -216,10 +291,14 @@ class JsonFile
      * @param string $json json string
      * @param string $file the json file
      *
+     * @throws ParsingException
      * @return mixed
      */
     public static function parseJson($json, $file = null)
     {
+        if (null === $json) {
+            return;
+        }
         $data = json_decode($json, true);
         if (null === $data && JSON_ERROR_NONE !== json_last_error()) {
             self::validateSyntax($json, $file);
@@ -233,10 +312,9 @@ class JsonFile
      *
      * @param  string                    $json
      * @param  string                    $file
-     * @return bool                      true on success
      * @throws \UnexpectedValueException
-     * @throws JsonValidationException
      * @throws ParsingException
+     * @return bool                      true on success
      */
     protected static function validateSyntax($json, $file = null)
     {

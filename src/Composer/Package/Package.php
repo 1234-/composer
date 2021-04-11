@@ -43,16 +43,23 @@ class Package extends BasePackage
     protected $stability;
     protected $notificationUrl;
 
+    /** @var Link[] */
     protected $requires = array();
+    /** @var Link[] */
     protected $conflicts = array();
+    /** @var Link[] */
     protected $provides = array();
+    /** @var Link[] */
     protected $replaces = array();
+    /** @var Link[] */
     protected $devRequires = array();
     protected $suggests = array();
     protected $autoload = array();
     protected $devAutoload = array();
     protected $includePaths = array();
-    protected $archiveExcludes = array();
+    protected $isDefaultBranch = false;
+    /** @var array */
+    protected $transportOptions = array();
 
     /**
      * Creates a new in memory package.
@@ -118,7 +125,7 @@ class Package extends BasePackage
     public function getTargetDir()
     {
         if (null === $this->targetDir) {
-            return;
+            return null;
         }
 
         return ltrim(preg_replace('{ (?:^|[\\\\/]+) \.\.? (?:[\\\\/]+|$) (?:\.\.? (?:[\\\\/]+|$) )*}x', '/', $this->targetDir), '/');
@@ -221,7 +228,7 @@ class Package extends BasePackage
     }
 
     /**
-     * @param array|null $mirrors
+     * {@inheritDoc}
      */
     public function setSourceMirrors($mirrors)
     {
@@ -309,7 +316,7 @@ class Package extends BasePackage
     }
 
     /**
-     * @param array|null $mirrors
+     * {@inheritDoc}
      */
     public function setDistMirrors($mirrors)
     {
@@ -330,6 +337,22 @@ class Package extends BasePackage
     public function getDistUrls()
     {
         return $this->getUrls($this->distUrl, $this->distMirrors, $this->distReference, $this->distType, 'dist');
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function getTransportOptions()
+    {
+        return $this->transportOptions;
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function setTransportOptions(array $options)
+    {
+        $this->transportOptions = $options;
     }
 
     /**
@@ -369,7 +392,7 @@ class Package extends BasePackage
     /**
      * Set the required packages
      *
-     * @param array $requires A set of package links
+     * @param Link[] $requires A set of package links
      */
     public function setRequires(array $requires)
     {
@@ -387,7 +410,7 @@ class Package extends BasePackage
     /**
      * Set the conflicting packages
      *
-     * @param array $conflicts A set of package links
+     * @param Link[] $conflicts A set of package links
      */
     public function setConflicts(array $conflicts)
     {
@@ -405,7 +428,7 @@ class Package extends BasePackage
     /**
      * Set the provided virtual packages
      *
-     * @param array $provides A set of package links
+     * @param Link[] $provides A set of package links
      */
     public function setProvides(array $provides)
     {
@@ -423,7 +446,7 @@ class Package extends BasePackage
     /**
      * Set the packages this one replaces
      *
-     * @param array $replaces A set of package links
+     * @param Link[] $replaces A set of package links
      */
     public function setReplaces(array $replaces)
     {
@@ -441,7 +464,7 @@ class Package extends BasePackage
     /**
      * Set the recommended packages
      *
-     * @param array $devRequires A set of package links
+     * @param Link[] $devRequires A set of package links
      */
     public function setDevRequires(array $devRequires)
     {
@@ -547,21 +570,36 @@ class Package extends BasePackage
     }
 
     /**
-     * Sets a list of patterns to be excluded from archives
-     *
-     * @param array $excludes
+     * @param bool $defaultBranch
      */
-    public function setArchiveExcludes(array $excludes)
+    public function setIsDefaultBranch($defaultBranch)
     {
-        $this->archiveExcludes = $excludes;
+        $this->isDefaultBranch = $defaultBranch;
     }
 
     /**
      * {@inheritDoc}
      */
-    public function getArchiveExcludes()
+    public function isDefaultBranch()
     {
-        return $this->archiveExcludes;
+        return $this->isDefaultBranch;
+    }
+
+    /**
+     * {@inheritDoc}
+     */
+    public function setSourceDistReferences($reference)
+    {
+        $this->setSourceReference($reference);
+
+        // only bitbucket, github and gitlab have auto generated dist URLs that easily allow replacing the reference in the dist URL
+        // TODO generalize this a bit for self-managed/on-prem versions? Some kind of replace token in dist urls which allow this?
+        if (preg_match('{^https?://(?:(?:www\.)?bitbucket\.org|(api\.)?github\.com|(?:www\.)?gitlab\.com)/}i', $this->getDistUrl())) {
+            $this->setDistReference($reference);
+            $this->setDistUrl(preg_replace('{(?<=/|sha=)[a-f0-9]{40}(?=/|$)}i', $reference, $this->getDistUrl()));
+        } elseif ($this->getDistReference()) { // update the dist reference if there was one, but if none was provided ignore it
+            $this->setDistReference($reference);
+        }
     }
 
     /**
@@ -594,8 +632,10 @@ class Package extends BasePackage
                     $mirrorUrl = ComposerMirror::processGitUrl($mirror['url'], $this->name, $url, $type);
                 } elseif ($urlType === 'source' && $type === 'hg') {
                     $mirrorUrl = ComposerMirror::processHgUrl($mirror['url'], $this->name, $url, $type);
+                } else {
+                    continue;
                 }
-                if (!in_array($mirrorUrl, $urls)) {
+                if (!\in_array($mirrorUrl, $urls)) {
                     $func = $mirror['preferred'] ? 'array_unshift' : 'array_push';
                     $func($urls, $mirrorUrl);
                 }

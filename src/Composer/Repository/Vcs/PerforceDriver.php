@@ -13,6 +13,7 @@
 namespace Composer\Repository\Vcs;
 
 use Composer\Config;
+use Composer\Cache;
 use Composer\IO\IOInterface;
 use Composer\Util\ProcessExecutor;
 use Composer\Util\Perforce;
@@ -24,9 +25,8 @@ class PerforceDriver extends VcsDriver
 {
     protected $depot;
     protected $branch;
-    protected $perforce;
-    protected $composerInfo;
-    protected $composerInfoIdentifier;
+    /** @var ?Perforce */
+    protected $perforce = null;
 
     /**
      * {@inheritDoc}
@@ -40,8 +40,8 @@ class PerforceDriver extends VcsDriver
         }
 
         $this->initPerforce($this->repoConfig);
-        $this->perforce->p4Login($this->io);
-        $this->perforce->checkStream($this->depot);
+        $this->perforce->p4Login();
+        $this->perforce->checkStream();
 
         $this->perforce->writeP4ClientSpec();
         $this->perforce->connectClient();
@@ -55,23 +55,28 @@ class PerforceDriver extends VcsDriver
             return;
         }
 
+        if (!Cache::isUsable($this->config->get('cache-vcs-dir'))) {
+            throw new \RuntimeException('PerforceDriver requires a usable cache directory, and it looks like you set it to be disabled');
+        }
+
         $repoDir = $this->config->get('cache-vcs-dir') . '/' . $this->depot;
         $this->perforce = Perforce::create($repoConfig, $this->getUrl(), $repoDir, $this->process, $this->io);
     }
 
     /**
-     * {@inheritDoc}
+     * {@inheritdoc}
      */
-    public function getComposerInformation($identifier)
+    public function getFileContent($file, $identifier)
     {
-        if (!empty($this->composerInfoIdentifier)) {
-            if (strcmp($identifier, $this->composerInfoIdentifier) === 0) {
-                return $this->composerInfo;
-            }
-        }
-        $composer_info = $this->perforce->getComposerInformation($identifier);
+        return $this->perforce->getFileContent($file, $identifier);
+    }
 
-        return $composer_info;
+    /**
+     * {@inheritdoc}
+     */
+    public function getChangeDate($identifier)
+    {
+        return null;
     }
 
     /**
@@ -87,9 +92,7 @@ class PerforceDriver extends VcsDriver
      */
     public function getBranches()
     {
-        $branches = $this->perforce->getBranches();
-
-        return $branches;
+        return $this->perforce->getBranches();
     }
 
     /**
@@ -97,9 +100,7 @@ class PerforceDriver extends VcsDriver
      */
     public function getTags()
     {
-        $tags = $this->perforce->getTags();
-
-        return $tags;
+        return $this->perforce->getTags();
     }
 
     /**
@@ -115,14 +116,12 @@ class PerforceDriver extends VcsDriver
      */
     public function getSource($identifier)
     {
-        $source = array(
-            'type'      => 'perforce',
-            'url'       => $this->repoConfig['url'],
+        return array(
+            'type' => 'perforce',
+            'url' => $this->repoConfig['url'],
             'reference' => $identifier,
-            'p4user'    => $this->perforce->getUser()
+            'p4user' => $this->perforce->getUser(),
         );
-
-        return $source;
     }
 
     /**
@@ -138,10 +137,9 @@ class PerforceDriver extends VcsDriver
      */
     public function hasComposerFile($identifier)
     {
-        $this->composerInfo = $this->perforce->getComposerInformation('//' . $this->depot . '/' . $identifier);
-        $this->composerInfoIdentifier = $identifier;
+        $composerInfo = $this->perforce->getComposerInformation('//' . $this->depot . '/' . $identifier);
 
-        return !empty($this->composerInfo);
+        return !empty($composerInfo);
     }
 
     /**
@@ -149,7 +147,7 @@ class PerforceDriver extends VcsDriver
      */
     public function getContents($url)
     {
-        return false;
+        throw new \BadMethodCallException('Not implemented/used in PerforceDriver');
     }
 
     /**
