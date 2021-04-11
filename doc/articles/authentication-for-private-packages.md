@@ -212,8 +212,7 @@ composer config [--global] --editor --auth
 
 ```json
 {
-    "gitlab-oauth": {
-        "example.org": "token"
+    "
     }
 }
 ```
